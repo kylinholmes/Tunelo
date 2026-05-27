@@ -70,6 +70,23 @@ export async function deleteTunnel(id) {
   return invoke("delete_tunnel", { id });
 }
 
+// ─── app meta ───
+
+export async function getAppVersion() {
+  if (!isTauri) return "dev";
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
+export async function openExternal(url) {
+  if (!isTauri) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  return openUrl(url);
+}
+
 // ─── autostart (open at login) ───
 
 let _mockAutostartEnabled = false;

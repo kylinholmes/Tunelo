@@ -29,6 +29,46 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Returns the directory next to the running exe — but only when this
+/// looks like a portable install (writable + not installed into a
+/// system path). In dev builds we never go portable, so debugging
+/// always uses the standard OS data dir.
+fn portable_root() -> Option<std::path::PathBuf> {
+    if cfg!(debug_assertions) { return None; }
+
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?.to_path_buf();
+    let parent_lc = parent.to_string_lossy().to_lowercase();
+
+    // Reject typical "installed" locations
+    #[cfg(target_os = "windows")]
+    {
+        for bad in ["\\program files\\", "\\program files (x86)\\",
+                    "\\windows\\system32\\", "\\windows\\syswow64\\"] {
+            if parent_lc.contains(bad) { return None; }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if parent_lc.starts_with("/applications") { return None; }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if parent_lc.starts_with("/usr/") || parent_lc.starts_with("/opt/") {
+            return None;
+        }
+    }
+
+    // Probe: can we actually write next to the exe?
+    let probe = parent.join(".tunelo-write-probe");
+    if std::fs::write(&probe, b"").is_err() {
+        return None;
+    }
+    let _ = std::fs::remove_file(&probe);
+
+    Some(parent.join("Tunelo-data"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -38,10 +78,24 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            let config_dir = app.path().app_config_dir()
-                .expect("无法解析 app_config_dir");
-            let data_dir = app.path().app_data_dir()
-                .expect("无法解析 app_data_dir");
+            // Portable mode: when the exe lives somewhere writable and
+            // not in a system "installed" path, we keep our state next
+            // to the binary (a `Tunelo-data/` sibling folder). Otherwise
+            // we use the OS user data dir.
+            let (config_dir, data_dir) = match portable_root() {
+                Some(p) => {
+                    let _ = std::fs::create_dir_all(&p);
+                    eprintln!("Tunelo: portable mode, data at {}", p.display());
+                    (p.clone(), p)
+                }
+                None => {
+                    let cd = app.path().app_config_dir()
+                        .expect("无法解析 app_config_dir");
+                    let dd = app.path().app_data_dir()
+                        .expect("无法解析 app_data_dir");
+                    (cd, dd)
+                }
+            };
             let store = Store::load(data_dir.join("state.toml"))
                 .expect("加载 state.toml 失败");
             let settings = SettingsStore::load(config_dir.join("settings.toml"))

@@ -17,6 +17,7 @@ export default function SettingsPage() {
   // autostart is OS-level (registry / LaunchAgent), tracked independently
   // of settings.toml — the plugin is the source of truth.
   const [autostart, setAutostart] = React.useState(false);
+  const [version, setVersion] = React.useState("");
 
   React.useEffect(() => {
     ipc.getSettings()
@@ -24,6 +25,9 @@ export default function SettingsPage() {
       .catch(e => setError(e.message || String(e)));
     ipc.isAutostartEnabled()
       .then(setAutostart)
+      .catch(() => {});
+    ipc.getAppVersion()
+      .then(setVersion)
       .catch(() => {});
   }, []);
 
@@ -133,10 +137,18 @@ export default function SettingsPage() {
             }}>TL</div>
             <div>
               <div style={{ fontSize: 16, fontWeight: 600 }}>Tunelo</div>
-              <div className="dim" style={{ fontSize: "var(--fs-sm)" }}>v0.9.0 · 跨平台 SSH 隧道管理器</div>
+              <div className="dim" style={{ fontSize: "var(--fs-sm)" }}>
+                {version ? `v${version}` : ""} · 跨平台 SSH 隧道管理器
+              </div>
             </div>
             <div style={{ flex: 1 }}/>
-            <button className="btn"><Icon name="external" size={11}/> GitHub</button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => ipc.openExternal("https://github.com/kylinholmes/Tunelo")}
+            >
+              <Icon name="external" size={11}/> GitHub
+            </button>
           </div>
         </Section>
       </div>
