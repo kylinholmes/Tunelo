@@ -8,10 +8,40 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>Tunelo · SSH 隧道管理器</title>
+    <style>
+      html, body { margin: 0; background: #0a0b0d; color: #e6e8eb; }
+      #boot-splash {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        flex-direction: column; gap: 14px;
+        background: #0a0b0d;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0.18em;
+      }
+      #boot-splash .name {
+        font-size: 22px; font-weight: 600; color: #e6e8eb;
+        opacity: 0.92;
+      }
+      #boot-splash .bar {
+        width: 88px; height: 2px;
+        background: linear-gradient(90deg, transparent, #58e2a3, transparent);
+        background-size: 200% 100%;
+        animation: boot-shimmer 1.2s linear infinite;
+      }
+      @keyframes boot-shimmer {
+        0%   { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-splash">
+        <div class="name">TUNELO</div>
+        <div class="bar"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

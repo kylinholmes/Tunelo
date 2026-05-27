@@ -100,10 +100,8 @@ jobs:
 
             ## 下载
             - **Windows**: 推荐 `.exe` (NSIS installer)，也提供 `.msi`
-            - **macOS**: `.dmg` (universal, 同时支持 Intel + Apple Silicon)
+            - **macOS**: `.dmg` (universal, 同时支持 Intel + Apple Silicon) 
 
-            ## 验证
-            cargo + 单测全过；release build 经 `bun tauri build` 本地打包验证。
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
