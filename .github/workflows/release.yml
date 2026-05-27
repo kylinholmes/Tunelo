@@ -48,6 +48,39 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      # push v* tag 时，把 version 从 tag 同步到三处 manifest，
+      # 这样 tauri build 产出的文件名 (Tunelo_<version>_x64-setup.exe)
+      # 跟 release tag 一致，避免出现 "v0.9.1 release 里挂着 0.9.0
+      # 文件" 的尴尬。
+      - name: Sync version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const tag = context.ref.replace('refs/tags/', '');
+            const version = tag.replace(/^v/, '');
+
+            // tauri.conf.json
+            const confPath = 'src-tauri/tauri.conf.json';
+            const conf = JSON.parse(fs.readFileSync(confPath, 'utf8'));
+            conf.version = version;
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n');
+
+            // package.json
+            const pkgPath = 'package.json';
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            pkg.version = version;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+            // Cargo.toml — first `version = "..."` line under [package]
+            const cargoPath = 'src-tauri/Cargo.toml';
+            let cargo = fs.readFileSync(cargoPath, 'utf8');
+            cargo = cargo.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`);
+            fs.writeFileSync(cargoPath, cargo);
+
+            core.info(`Synced version to ${version}`);
+
       - name: Install frontend deps
         run: bun install
 
