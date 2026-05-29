@@ -1,21 +1,22 @@
-use tauri::{AppHandle, Emitter, State};
+use std::sync::Arc;
+use tauri::State;
 
-use crate::AppState;
+use crate::core::AppContext;
 use crate::config::AppSettings;
 use crate::error::AppResult;
 
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
-    Ok(state.settings.get())
+pub fn get_settings(ctx: State<'_, Arc<AppContext>>) -> AppResult<AppSettings> {
+    Ok(ctx.settings.get())
 }
 
 #[tauri::command]
 pub fn save_settings(
-    state: State<'_, AppState>,
-    app: AppHandle,
+    ctx: State<'_, Arc<AppContext>>,
     settings: AppSettings,
 ) -> AppResult<AppSettings> {
-    let saved = state.settings.save(settings)?;
-    let _ = app.emit("settings:changed", &saved);
+    let saved = ctx.settings.save(settings)?;
+    let payload = serde_json::to_value(&saved).unwrap_or(serde_json::Value::Null);
+    ctx.sink.emit("settings:changed", payload);
     Ok(saved)
 }

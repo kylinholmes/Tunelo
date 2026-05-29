@@ -43,3 +43,21 @@ impl From<toml::ser::Error> for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+// Web mode: map AppError to HTTP responses. The JSON shape matches what
+// the frontend's existing httpCall wrapper expects: `{ "error": "..." }`
+// — same shape thrown by invoke() so business code is unchanged.
+impl axum::response::IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::http::StatusCode;
+        use axum::Json;
+
+        let status = match self.code.as_str() {
+            "not_found" => StatusCode::NOT_FOUND,
+            "invalid_input" => StatusCode::BAD_REQUEST,
+            "host_in_use" => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, Json(serde_json::json!({ "error": self.message }))).into_response()
+    }
+}

@@ -1,6 +1,6 @@
 import React from "react";
 import { Icon, StatusDot } from "../components/ui";
-import { hostById, formatUptime } from "../lib/data";
+import { hostById, formatUptime } from "../lib/ipc";
 
 // Dashboard — at-a-glance overview. The home page when you have many tunnels.
 

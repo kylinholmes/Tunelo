@@ -20,15 +20,14 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::core::AppContext;
 use crate::ssh::{command, probe};
-use crate::store::TunnelStatus;
+use crate::store::{TunnelStatus, TunnelType};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RunnerCmd {
@@ -46,7 +45,7 @@ struct StatusPayload {
 
 pub struct Runner {
     pub tunnel_id: Uuid,
-    pub app: AppHandle,
+    pub ctx: Arc<AppContext>,
     pub cmd_rx: mpsc::Receiver<RunnerCmd>,
     /// Lock-protected current child PID. The supervisor reads this on
     /// app exit to force-kill stragglers. None when no ssh process is
@@ -64,20 +63,16 @@ impl Runner {
 
             // Re-snapshot tunnel + host each iteration — user may have
             // edited them between reconnects.
-            let state = self.app.state::<AppState>();
-            let Some(tunnel) = state.store.get_tunnel(self.tunnel_id) else {
+            let Some(tunnel) = self.ctx.store.get_tunnel(self.tunnel_id) else {
                 // tunnel deleted while running — exit
-                drop(state);
                 return;
             };
-            let Some(host) = state.store.get_host(tunnel.host_id) else {
-                drop(state);
+            let Some(host) = self.ctx.store.get_host(tunnel.host_id) else {
                 self.emit(TunnelStatus::Failed, None, Some("依赖的主机已不存在".into()));
                 return;
             };
-            let settings = state.settings.get();
-            let all_hosts = state.store.list_hosts();
-            drop(state);
+            let settings = self.ctx.settings.get();
+            let all_hosts = self.ctx.store.list_hosts();
 
             let ssh_path = match settings.ssh_path {
                 Some(p) if !p.trim().is_empty() => p,
@@ -87,17 +82,23 @@ impl Runner {
                 }
             };
 
-            // pre-flight port check — friendlier than ssh's own failure msg
-            if let Err(e) = probe::check_local_port_free(tunnel.local_port) {
-                let msg = format!("本地端口 {} 被占用: {}", tunnel.local_port, e);
-                if !tunnel.keep_alive {
-                    self.emit(TunnelStatus::Failed, None, Some(msg));
-                    return;
+            // pre-flight port check — friendlier than ssh's own failure msg.
+            // Only meaningful for L/D where `local_port` is a *local* bind.
+            // For R, `local_port` is the port the remote sshd will listen on;
+            // binding it locally would falsely flag any port the user happens
+            // to be using on this machine.
+            if matches!(tunnel.kind, TunnelType::L | TunnelType::D) {
+                if let Err(e) = probe::check_local_port_free(tunnel.local_port) {
+                    let msg = format!("本地端口 {} 被占用: {}", tunnel.local_port, e);
+                    if !tunnel.keep_alive {
+                        self.emit(TunnelStatus::Failed, None, Some(msg));
+                        return;
+                    }
+                    attempt += 1;
+                    self.emit(TunnelStatus::Reconnecting, None, Some(msg));
+                    if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
+                    continue;
                 }
-                attempt += 1;
-                self.emit(TunnelStatus::Reconnecting, None, Some(msg));
-                if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
-                continue;
             }
 
             self.emit(TunnelStatus::Connecting, None, None);
@@ -235,15 +236,14 @@ impl Runner {
     }
 
     fn emit(&self, status: TunnelStatus, started_at: Option<i64>, last_error: Option<String>) {
-        let state = self.app.state::<AppState>();
-        let _ = state.store.update_runtime(self.tunnel_id, status, started_at, last_error.clone());
-        drop(state);
-        let _ = self.app.emit("tunnel:status-changed", StatusPayload {
+        let _ = self.ctx.store.update_runtime(self.tunnel_id, status, started_at, last_error.clone());
+        let payload = serde_json::to_value(StatusPayload {
             id: self.tunnel_id,
             status,
             started_at,
             last_error,
-        });
+        }).unwrap_or(serde_json::Value::Null);
+        self.ctx.sink.emit("tunnel:status-changed", payload);
     }
 }
 

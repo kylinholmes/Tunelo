@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tauri::AppHandle;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::core::AppContext;
 use crate::error::{AppError, AppResult};
 use crate::ssh::runner::{Runner, RunnerCmd};
 
@@ -32,7 +32,7 @@ impl Supervisor {
         self.handles.lock().unwrap().contains_key(&id)
     }
 
-    pub fn start(&self, tunnel_id: Uuid, app: AppHandle) -> AppResult<()> {
+    pub fn start(&self, tunnel_id: Uuid, ctx: Arc<AppContext>) -> AppResult<()> {
         let mut handles = self.handles.lock().unwrap();
         if handles.contains_key(&tunnel_id) {
             return Err(AppError::invalid("隧道已在运行"));
@@ -46,10 +46,7 @@ impl Supervisor {
         drop(handles);
 
         let handles_arc = self.handles.clone();
-        let runner = Runner { tunnel_id, app, cmd_rx: rx, child_pid };
-        // Use tauri's runtime helper so this works both from sync
-        // commands (called on Tauri's main thread, no tokio context) and
-        // from async commands.
+        let runner = Runner { tunnel_id, ctx, cmd_rx: rx, child_pid };
         tauri::async_runtime::spawn(async move {
             runner.run().await;
             handles_arc.lock().unwrap().remove(&tunnel_id);
@@ -67,14 +64,14 @@ impl Supervisor {
         Ok(())
     }
 
-    pub async fn restart(&self, tunnel_id: Uuid, app: AppHandle) -> AppResult<()> {
+    pub async fn restart(&self, tunnel_id: Uuid, ctx: Arc<AppContext>) -> AppResult<()> {
         let tx = self.handles.lock().unwrap().get(&tunnel_id).map(|h| h.cmd_tx.clone());
         match tx {
             Some(tx) => {
                 let _ = tx.send(RunnerCmd::Restart).await;
                 Ok(())
             }
-            None => self.start(tunnel_id, app),
+            None => self.start(tunnel_id, ctx),
         }
     }
 

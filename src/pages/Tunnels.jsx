@@ -3,7 +3,7 @@ import {
   Icon, StatusDot, StatusPill, Seg, Search, Drawer, Menu, Modal,
   EmptyState, ProxyChain, Toggle, Select,
 } from "../components/ui";
-import { hostById, formatUptime, sshCommand } from "../lib/data";
+import { hostById, formatUptime, sshCommand } from "../lib/ipc";
 import * as ipc from "../lib/ipc";
 import { useNotify } from "../components/Confirm";
 
@@ -350,9 +350,16 @@ function TunnelDetail({ tunnel, host }) {
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>映射</span>
         <span className="mono" style={{ fontSize: "var(--fs-sm)" }}>
-          {tunnel.type === "D"
-            ? `127.0.0.1:${tunnel.local_port} → SOCKS5`
-            : `127.0.0.1:${tunnel.local_port}  →  ${tunnel.remote_host}:${tunnel.remote_port}`}
+          {(() => {
+            const bind = tunnel.bind_address || "127.0.0.1";
+            if (tunnel.type === "D") {
+              return `[本地] ${bind}:${tunnel.local_port}  →  SOCKS5`;
+            }
+            if (tunnel.type === "R") {
+              return `[远端] ${bind}:${tunnel.local_port}  →  [本机] ${tunnel.remote_host}:${tunnel.remote_port}`;
+            }
+            return `[本地] ${bind}:${tunnel.local_port}  →  [远端] ${tunnel.remote_host}:${tunnel.remote_port}`;
+          })()}
         </span>
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>经</span>
@@ -438,7 +445,7 @@ function TunnelForm({ tunnel, hosts, onSubmit }) {
     <form id="tunnel-edit-form" onSubmit={handleSubmit}>
       <div className="field">
         <label>名称</label>
-        <input className="input" value={form.name} onChange={e => set("name", e.target.value)} placeholder="例如 pg-prod" autoFocus required/>
+        <input className="input" value={form.name} onChange={e => set("name", e.target.value)} autoFocus required/>
       </div>
       <div className="field">
         <label>转发类型</label>
@@ -448,9 +455,9 @@ function TunnelForm({ tunnel, hosts, onSubmit }) {
           { value: "D", label: "SOCKS5" },
         ]}/>
         <span className="help">
-          {form.type === "L" && "本地端口 → 远端服务（最常用，比如连远端数据库）"}
-          {form.type === "R" && "暴露本地服务给远端访问"}
-          {form.type === "D" && "在本地起一个 SOCKS5 代理"}
+          {form.type === "L" && "本地端口 → 远端服务（把远程服务转发到本地访问）"}
+          {form.type === "R" && "远端端口 → 本机服务（把本地服务暴露到远端访问）"}
+          {form.type === "D" && "本机起一个 SOCKS5 代理"}
         </span>
       </div>
       <div className="field">
@@ -467,43 +474,91 @@ function TunnelForm({ tunnel, hosts, onSubmit }) {
           }))}
         />
       </div>
-      {/* 本地端：监听地址 + 端口 合成一行 */}
-      <div className="field">
-        <label>本地</label>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Seg value={form.bind_address} onChange={v => set("bind_address", v)} options={[
-            { value: "127.0.0.1", label: "仅本机" },
-            { value: "0.0.0.0", label: "全部网络" },
-          ]}/>
-          <input
-            className="input mono"
-            value={form.local_port || ""}
-            onChange={e => set("local_port", e.target.value)}
-            type="number"
-            placeholder={form.type === "D" ? "1080" : "5432"}
-            min="1" max="65535"
-            style={{ width: 120 }}
-            required
-          />
-        </div>
-        <span className="help">
-          {form.bind_address === "0.0.0.0"
-            ? "局域网内其它设备能通过本机 IP 访问这个端口（注意安全）"
-            : "只有本机程序能连接（默认推荐）"}
-        </span>
-      </div>
+      {form.type === "R" ? (
+        <>
+          <div className="row-2">
+            <div className="field">
+              <label>本地服务 地址</label>
+              <input className="input mono" value={form.remote_host || ""} onChange={e => set("remote_host", e.target.value)} placeholder="localhost" required/>
+            </div>
+            <div className="field">
+              <label>本地服务 端口</label>
+              <input className="input mono" value={form.remote_port || ""} onChange={e => set("remote_port", e.target.value)} type="number" min="1" max="65535" required/>
+            </div>
+          </div>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            margin: "2px 0 10px", color: "var(--fg-2)",
+            fontSize: "var(--fs-xs)",
+          }}>
+            {/* <span style={{ flex: 1, height: 1, background: "var(--border)" }}/> */}
+            {/* <span>转发到</span> */}
+            {/* <span style={{ flex: 1, height: 1, background: "var(--border)" }}/> */}
+          </div>
+          <div className="field">
+            <label>远端对外端口</label>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <Seg value={form.bind_address} onChange={v => set("bind_address", v)} options={[
+                { value: "127.0.0.1", label: "仅服务端本机" },
+                { value: "0.0.0.0", label: "全部网络" },
+              ]}/>
+              <input
+                className="input mono"
+                value={form.local_port || ""}
+                onChange={e => set("local_port", e.target.value)}
+                type="number"
+                min="1" max="65535"
+                style={{ width: 120 }}
+                required
+              />
+            </div>
+            <span className="help">
+              {form.bind_address === "0.0.0.0"
+                ? "在 ssh 服务端所有接口上开此端口 — 需要远端 sshd_config 配 GatewayPorts yes/clientspecified，否则仍只在 127.0.0.1 监听"
+                : "仅在 ssh 服务端 127.0.0.1 上开此端口，只有服务端本机程序能连接"}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="field">
+            <label>本地</label>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <Seg value={form.bind_address} onChange={v => set("bind_address", v)} options={[
+                { value: "127.0.0.1", label: "仅本机" },
+                { value: "0.0.0.0", label: "全部网络" },
+              ]}/>
+              <input
+                className="input mono"
+                value={form.local_port || ""}
+                onChange={e => set("local_port", e.target.value)}
+                type="number"
+                placeholder={form.type === "D" ? "1080" : "5432"}
+                min="1" max="65535"
+                style={{ width: 120 }}
+                required
+              />
+            </div>
+            <span className="help">
+              {form.bind_address === "0.0.0.0"
+                ? "局域网内其它设备能通过本机 IP 访问这个端口（注意安全）"
+                : "只有本机程序能连接（默认推荐）"}
+            </span>
+          </div>
 
-      {form.type !== "D" && (
-        <div className="row-2">
-          <div className="field">
-            <label>远端地址</label>
-            <input className="input mono" value={form.remote_host || ""} onChange={e => set("remote_host", e.target.value)} placeholder="db.internal" required/>
-          </div>
-          <div className="field">
-            <label>远端端口</label>
-            <input className="input mono" value={form.remote_port || ""} onChange={e => set("remote_port", e.target.value)} type="number" placeholder="5432" min="1" max="65535" required/>
-          </div>
-        </div>
+          {form.type === "L" && (
+            <div className="row-2">
+              <div className="field">
+                <label>远端地址</label>
+                <input className="input mono" value={form.remote_host || ""} onChange={e => set("remote_host", e.target.value)} placeholder="db.internal" required/>
+              </div>
+              <div className="field">
+                <label>远端端口</label>
+                <input className="input mono" value={form.remote_port || ""} onChange={e => set("remote_port", e.target.value)} type="number" placeholder="5432" min="1" max="65535" required/>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       <div className="divider"/>

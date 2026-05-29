@@ -23,6 +23,10 @@ export default defineConfig(async () => ({
           port: 1421,
         }
       : undefined,
+    proxy: {
+      "/api":    "http://127.0.0.1:17171",
+      "/events": { target: "http://127.0.0.1:17171", changeOrigin: true, ws: false },
+    },
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],

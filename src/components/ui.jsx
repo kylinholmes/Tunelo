@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { proxyChain } from "../lib/data";
+import { proxyChain } from "../lib/ipc";
 
 // Inline SVG icons — single style, 14px default, currentColor strokes
 export const Icon = ({ name, size = 14, style, className }) => {

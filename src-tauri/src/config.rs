@@ -18,6 +18,11 @@ pub struct AppSettings {
     pub auto_sync_ssh_config: bool,
     #[serde(default = "default_true")]
     pub minimize_to_tray_on_close: bool,
+    /// Bearer token required for HTTP API access when running with
+    /// `--web`. Empty means "no auth"; only allowed when bound to a
+    /// loopback address (enforced at startup in web/server.rs).
+    #[serde(default)]
+    pub web_secret: Option<String>,
 }
 
 fn default_true() -> bool { true }
@@ -31,6 +36,7 @@ impl Default for AppSettings {
             auto_connect_on_boot: true,
             auto_sync_ssh_config: true,
             minimize_to_tray_on_close: true,
+            web_secret: None,
         }
     }
 }

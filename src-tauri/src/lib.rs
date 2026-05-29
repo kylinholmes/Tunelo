@@ -6,19 +6,15 @@ use tauri::{
 
 mod commands;
 mod config;
+mod core;
 mod error;
 mod ssh;
 mod ssh_config;
 mod store;
+pub mod web;
 
 use crate::config::SettingsStore;
-use crate::ssh::Supervisor;
 use crate::store::Store;
-
-pub struct AppState {
-    pub store: Store,
-    pub settings: SettingsStore,
-}
 
 /// Bring the main window to the foreground (show + unminimize + focus).
 fn show_main_window(app: &AppHandle) {
@@ -101,22 +97,13 @@ pub fn run() {
             let settings = SettingsStore::load(config_dir.join("settings.toml"))
                 .expect("加载 settings.toml 失败");
 
-            // Crashed/last-session leftovers: clear runtime fields so we
-            // don't show "connected" for tunnels that aren't actually up.
-            store.reset_runtime_states();
+            let sink: crate::core::Sink = std::sync::Arc::new(
+                crate::core::TauriSink(app.handle().clone())
+            );
+            let ctx = crate::core::AppContext::new(store, settings, sink);
 
-            // Re-detect ssh paths every boot.
-            if let Err(e) = settings.auto_detect_paths() {
-                eprintln!("ssh path auto-detect 失败: {:?}", e);
-            }
-
-            // Capture whether we should auto-connect before moving state
-            // into managed storage.
-            let should_auto_connect = settings.get().auto_connect_on_boot;
-            let auto_start_ids = store.tunnels_with_auto_start();
-
-            app.manage(AppState { store, settings });
-            app.manage(Supervisor::new());
+            app.manage(ctx.clone());
+            crate::core::startup::apply_startup_actions(ctx.clone());
 
             // ─── system tray ───
             let show_item = MenuItem::with_id(app, "tray_show", "显示主窗口", true, None::<&str>)?;
@@ -133,8 +120,8 @@ pub fn run() {
                     "tray_quit" => {
                         // Reap ssh children before asking Tauri to exit
                         // so we don't depend on RunEvent timing.
-                        if let Some(sup) = app.try_state::<Supervisor>() {
-                            sup.kill_all_blocking();
+                        if let Some(ctx) = app.try_state::<std::sync::Arc<crate::core::AppContext>>() {
+                            ctx.supervisor.kill_all_blocking();
                         }
                         app.exit(0);
                     }
@@ -151,21 +138,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            if should_auto_connect && !auto_start_ids.is_empty() {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    // small delay to let the window finish creating before
-                    // we start emitting status events
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let supervisor = app_handle.state::<Supervisor>();
-                    for id in auto_start_ids {
-                        if let Err(e) = supervisor.start(id, app_handle.clone()) {
-                            eprintln!("auto-start 隧道 {} 失败: {:?}", id, e);
-                        }
-                    }
-                });
-            }
-
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -176,7 +148,7 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" { return; }
                 let app = window.app_handle();
-                let should_minimize = app.try_state::<AppState>()
+                let should_minimize = app.try_state::<std::sync::Arc<crate::core::AppContext>>()
                     .map(|s| s.settings.get().minimize_to_tray_on_close)
                     .unwrap_or(true);  // safe default if state not ready yet
                 if should_minimize {
@@ -188,8 +160,8 @@ pub fn run() {
                     // depending on RunEvent::ExitRequested timing — on
                     // Windows the event can arrive after the process
                     // has already begun tearing down.
-                    if let Some(sup) = app.try_state::<Supervisor>() {
-                        sup.kill_all_blocking();
+                    if let Some(ctx) = app.try_state::<std::sync::Arc<crate::core::AppContext>>() {
+                        ctx.supervisor.kill_all_blocking();
                     }
                 }
             }
@@ -218,8 +190,8 @@ pub fn run() {
             // App is about to exit — synchronously kill every ssh child
             // so we don't leak orphan tunnel processes.
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                let supervisor = app_handle.state::<Supervisor>();
-                supervisor.kill_all_blocking();
+                let ctx = app_handle.state::<std::sync::Arc<crate::core::AppContext>>();
+                ctx.supervisor.kill_all_blocking();
             }
         });
 }

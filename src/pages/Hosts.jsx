@@ -3,7 +3,7 @@ import {
   Icon, StatusDot, StatusPill, Seg, Search, Drawer, Menu, Modal,
   EmptyState, ProxyChain,
 } from "../components/ui";
-import { hostById, tunnelsByHost } from "../lib/data";
+import { hostById, tunnelsByHost } from "../lib/ipc";
 import * as ipc from "../lib/ipc";
 import { useNotify } from "../components/Confirm";
 
