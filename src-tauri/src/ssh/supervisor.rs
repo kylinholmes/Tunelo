@@ -47,7 +47,7 @@ impl Supervisor {
 
         let handles_arc = self.handles.clone();
         let runner = Runner { tunnel_id, ctx, cmd_rx: rx, child_pid };
-        tauri::async_runtime::spawn(async move {
+        crate::core::spawn(async move {
             runner.run().await;
             handles_arc.lock().unwrap().remove(&tunnel_id);
         });

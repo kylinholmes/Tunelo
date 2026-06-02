@@ -153,6 +153,7 @@ pub fn import_hosts(ctx: &AppContext, candidates: Vec<HostCandidate>) -> AppResu
             source: HostSource::Config,
             status: HostStatus::Unknown,
             last_error: None,
+            last_latency_ms: None,
         };
         saved.push(ctx.store.save_host(host)?);
     }

@@ -25,7 +25,7 @@ pub fn apply_startup_actions(ctx: Arc<AppContext>) {
         return;
     }
 
-    tauri::async_runtime::spawn(async move {
+    crate::core::spawn(async move {
         // small delay so listeners (window mount / SSE connect) have a
         // chance to subscribe before we start emitting status events
         tokio::time::sleep(Duration::from_millis(500)).await;

@@ -14,13 +14,15 @@ edition = "2021"
 name = "tunelo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# tauri-build is pure Rust (no GTK/glib), so it's a cheap unconditional
+# build-dep on every platform. build.rs decides — based on the *target*
+# (CARGO_CFG_TARGET_OS) — whether to actually run the desktop codegen,
+# skipping it for the Linux web build. Only the *runtime* `tauri` crate
+# (below) pulls webkit2gtk/glib, and that's excluded on Linux.
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-opener = "2"
-tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -35,3 +37,13 @@ futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 mime_guess = "2"
+
+# Desktop GUI shell — only on platforms we actually ship a window for.
+# On Linux the binary is the headless `--web` server only (see main.rs),
+# which keeps GTK/glib/webkit out of the dependency graph: the Linux
+# GLib version no longer matters, and the build can target musl for a
+# fully static, distro-agnostic binary.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-autostart = "2"

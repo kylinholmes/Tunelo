@@ -36,6 +36,9 @@ pub struct Host {
     pub status: HostStatus,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// 最近一次成功 test_host 的延迟（毫秒）。失败/未测时为 None。
+    #[serde(default)]
+    pub last_latency_ms: Option<u32>,
 }
 
 fn default_ssh_port() -> u16 { 22 }

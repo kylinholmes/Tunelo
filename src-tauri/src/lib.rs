@@ -1,9 +1,13 @@
+#[cfg(not(target_os = "linux"))]
 use tauri::{
     Manager, AppHandle, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+// Tauri IPC handlers — desktop-only. The Linux web build reaches the
+// same business logic through `web::routes` instead.
+#[cfg(not(target_os = "linux"))]
 mod commands;
 mod config;
 mod core;
@@ -13,10 +17,13 @@ mod ssh_config;
 mod store;
 pub mod web;
 
+#[cfg(not(target_os = "linux"))]
 use crate::config::SettingsStore;
+#[cfg(not(target_os = "linux"))]
 use crate::store::Store;
 
 /// Bring the main window to the foreground (show + unminimize + focus).
+#[cfg(not(target_os = "linux"))]
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -29,6 +36,7 @@ fn show_main_window(app: &AppHandle) {
 /// looks like a portable install (writable + not installed into a
 /// system path). In dev builds we never go portable, so debugging
 /// always uses the standard OS data dir.
+#[cfg(not(target_os = "linux"))]
 fn portable_root() -> Option<std::path::PathBuf> {
     if cfg!(debug_assertions) { return None; }
 
@@ -65,6 +73,7 @@ fn portable_root() -> Option<std::path::PathBuf> {
     Some(parent.join("Tunelo-data"))
 }
 
+#[cfg(not(target_os = "linux"))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

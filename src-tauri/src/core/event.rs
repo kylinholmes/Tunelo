@@ -11,9 +11,12 @@ pub trait EventSink: Send + Sync {
     fn emit(&self, topic: &str, payload: Value);
 }
 
-/// Tauri-backed sink. Used by the GUI startup path.
+/// Tauri-backed sink. Used by the GUI startup path. Absent on Linux,
+/// where we only build the web frontend (no Tauri dependency).
+#[cfg(not(target_os = "linux"))]
 pub struct TauriSink(pub tauri::AppHandle);
 
+#[cfg(not(target_os = "linux"))]
 impl EventSink for TauriSink {
     fn emit(&self, topic: &str, payload: Value) {
         use tauri::Emitter;

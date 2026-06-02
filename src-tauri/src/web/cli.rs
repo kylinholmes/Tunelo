@@ -11,7 +11,9 @@ use clap::Parser;
 )]
 pub struct Cli {
     /// Run headless: serve the bundled web UI over HTTP instead of opening a window.
-    #[arg(long)]
+    /// On Linux this is the only mode, so the flag is implied and hidden.
+    #[cfg_attr(not(target_os = "linux"), arg(long))]
+    #[cfg_attr(target_os = "linux", arg(long, hide = true))]
     pub web: bool,
 
     /// Bind address for the HTTP server (only used with --web).
@@ -23,6 +25,7 @@ pub struct Cli {
     pub port: u16,
 
     /// Bearer token for authentication (overrides settings.web_secret). Only with --web.
-    #[arg(long, requires = "web")]
+    #[cfg_attr(not(target_os = "linux"), arg(long, requires = "web"))]
+    #[cfg_attr(target_os = "linux", arg(long))]
     pub secret: Option<String>,
 }
