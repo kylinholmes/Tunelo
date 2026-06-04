@@ -88,7 +88,8 @@ impl Runner {
             // binding it locally would falsely flag any port the user happens
             // to be using on this machine.
             if matches!(tunnel.kind, TunnelType::L | TunnelType::D) {
-                if let Err(e) = probe::check_local_port_free(tunnel.local_port) {
+                let bind = tunnel.bind_address.as_deref().unwrap_or("127.0.0.1");
+                if let Err(e) = probe::check_local_port_free(bind, tunnel.local_port) {
                     let msg = format!("本地端口 {} 被占用: {}", tunnel.local_port, e);
                     if !tunnel.keep_alive {
                         self.emit(TunnelStatus::Failed, None, Some(msg));
@@ -164,6 +165,9 @@ impl Runner {
                     self.emit(TunnelStatus::Connected, Some(now_ms()), None);
                 }
                 status = child.wait() => {
+                    // child is dead — drop the pid immediately so a shutdown
+                    // reaper can't target a recycled pid during the backoff.
+                    *self.child_pid.lock().unwrap() = None;
                     let exit = describe_exit(&status);
                     let tail = stderr_tail(&stderr_buf);
                     let msg = format!("ssh 立即退出 ({}){}", exit, format_tail(&tail));
@@ -177,8 +181,10 @@ impl Runner {
                     continue;
                 }
                 cmd = self.cmd_rx.recv() => {
+                    self.emit(TunnelStatus::Stopping, None, None);
                     let _ = child.start_kill();
                     let _ = child.wait().await;
+                    *self.child_pid.lock().unwrap() = None;
                     match cmd {
                         Some(RunnerCmd::Stop) | None => {
                             self.emit(TunnelStatus::Idle, None, None);
@@ -195,6 +201,7 @@ impl Runner {
                     self.emit(TunnelStatus::Stopping, None, None);
                     let _ = child.start_kill();
                     let _ = child.wait().await;
+                    *self.child_pid.lock().unwrap() = None;
                     match cmd {
                         Some(RunnerCmd::Stop) | None => {
                             self.emit(TunnelStatus::Idle, None, None);
@@ -204,6 +211,7 @@ impl Runner {
                     }
                 }
                 status = child.wait() => {
+                    *self.child_pid.lock().unwrap() = None;
                     let exit = describe_exit(&status);
                     let tail = stderr_tail(&stderr_buf);
                     let msg = format!("ssh 退出 ({}){}", exit, format_tail(&tail));

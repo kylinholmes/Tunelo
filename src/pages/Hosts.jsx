@@ -124,7 +124,7 @@ export default function HostsPage({ hosts, tunnels: allTunnels = [], onSaveHost,
         {filtered.length === 0 && (
           <EmptyState
             title={hosts.length === 0 ? "还没有主机" : "没有匹配的主机"}
-            hint={hosts.length === 0 ? "可以手动添加，或开启「自动同步 ~/.ssh/config」自动导入。" : "调整筛选或搜索。"}
+            hint={hosts.length === 0 ? "可以手动添加，或用「导入」从 ~/.ssh/config 批量导入。" : "调整筛选或搜索。"}
             cta={hosts.length === 0 ? { label: "新建主机", onClick: () => openEdit("new") } : null}
             icon="host"
           />
@@ -164,7 +164,7 @@ export default function HostsPage({ hosts, tunnels: allTunnels = [], onSaveHost,
           </button>
         </>}
       >
-        {sel && <HostDetail host={sel} tunnels={tunnelsByHost(sel.id, allTunnels)}/>}
+        {sel && <HostDetail host={sel} tunnels={tunnelsByHost(sel.id, allTunnels)} hosts={hosts}/>}
       </Drawer>
 
       <Drawer
@@ -289,15 +289,17 @@ function HostCard({ host, hosts, tunnels, selectMode, selected, onToggleSelect, 
         }
       </span>
 
-      {/* tunnels count / error */}
+      {/* latency (when last test ok) / tunnels count / error */}
       <span style={{ fontSize: "var(--fs-xs)", minWidth: 0, overflow: "hidden" }}>
         {host.last_error && host.status === "fail"
           ? <span className="mono tr" style={{ color: "var(--fail)", display: "inline-block", maxWidth: "100%" }} title={host.last_error}>
               {host.last_error}
             </span>
-          : tunnels.length > 0
-            ? <span className="dim-2"><span className="mono" style={{ color: "var(--fg-1)" }}>{tunnels.length}</span> 条隧道在用</span>
-            : <span className="dim-2">未使用</span>
+          : host.status === "ok" && host.last_latency_ms != null
+            ? <span className="dim-2"><span className="mono" style={{ color: "var(--fg-1)" }}>{host.last_latency_ms}ms</span>{tunnels.length > 0 ? ` · ${tunnels.length} 条隧道` : ""}</span>
+            : tunnels.length > 0
+              ? <span className="dim-2"><span className="mono" style={{ color: "var(--fg-1)" }}>{tunnels.length}</span> 条隧道在用</span>
+              : <span className="dim-2">未使用</span>
         }
       </span>
 
@@ -322,7 +324,7 @@ function HostCard({ host, hosts, tunnels, selectMode, selected, onToggleSelect, 
   );
 }
 
-function HostDetail({ host, tunnels }) {
+function HostDetail({ host, tunnels, hosts = [] }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 18, rowGap: 14, alignItems: "center", marginBottom: 20 }}>
@@ -333,10 +335,17 @@ function HostDetail({ host, tunnels }) {
         <span className="mono" style={{ fontSize: "var(--fs-sm)" }}>{host.identity_file || <span className="dim-2">默认 / ssh-agent</span>}</span>
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>连接路径</span>
-        <span style={{ fontSize: "var(--fs-sm)" }}><ProxyChain host={host}/></span>
+        <span style={{ fontSize: "var(--fs-sm)" }}><ProxyChain host={host} hosts={hosts}/></span>
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>状态</span>
         <span><StatusPill status={host.status}/></span>
+
+        {host.last_latency_ms != null && (
+          <>
+            <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>延迟</span>
+            <span className="mono" style={{ fontSize: "var(--fs-sm)" }}>{host.last_latency_ms} ms</span>
+          </>
+        )}
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>来源</span>
         <span style={{ fontSize: "var(--fs-sm)" }}>

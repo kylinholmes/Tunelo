@@ -19,7 +19,10 @@ pub fn build_test_args(host: &Host, all_hosts: &[Host]) -> Vec<String> {
     }
     for opt in [
         "BatchMode=yes",
-        "ConnectTimeout=5",
+        // Real tunnels impose no ConnectTimeout; keep this generous so a
+        // slow-but-working link isn't reported as unreachable. Bounded by the
+        // outer wall-clock timeout in host_test.rs.
+        "ConnectTimeout=10",
         "StrictHostKeyChecking=accept-new",
     ] {
         args.push("-o".into());
@@ -44,29 +47,27 @@ pub fn build_args(tunnel: &Tunnel, host: &Host, all_hosts: &[Host]) -> Vec<Strin
 
     // bind_address defaults to loopback. Only include it in the arg when
     // it's non-default so ssh's syntax stays minimal for the common case.
+    // (For -R the bind is interpreted on the remote side and needs the
+    // server's GatewayPorts, but the [bind:]port syntax is identical.)
     let bind = tunnel.bind_address.as_deref().filter(|s| !s.is_empty() && *s != "127.0.0.1");
-    let lr_prefix = match bind {
-        Some(addr) => format!("{}:{}", addr, tunnel.local_port),
-        None => tunnel.local_port.to_string(),
-    };
-    let d_prefix = match bind {
+    let bind_prefix = match bind {
         Some(addr) => format!("{}:{}", addr, tunnel.local_port),
         None => tunnel.local_port.to_string(),
     };
     match tunnel.kind {
         TunnelType::L => args.push(format!(
             "-L{}:{}:{}",
-            lr_prefix,
+            bind_prefix,
             tunnel.remote_host.as_deref().unwrap_or(""),
             tunnel.remote_port.unwrap_or(0),
         )),
         TunnelType::R => args.push(format!(
             "-R{}:{}:{}",
-            lr_prefix,
+            bind_prefix,
             tunnel.remote_host.as_deref().unwrap_or(""),
             tunnel.remote_port.unwrap_or(0),
         )),
-        TunnelType::D => args.push(format!("-D{}", d_prefix)),
+        TunnelType::D => args.push(format!("-D{}", bind_prefix)),
     }
 
     if let Some(id_file) = &host.identity_file {
@@ -119,7 +120,14 @@ fn build_jump_chain(host: &Host, all_hosts: &[Host]) -> String {
 }
 
 fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~") {
+    let Some(rest) = path.strip_prefix("~") else {
+        return path.to_string();
+    };
+    // Only expand "~" and "~/..." (the current user's home). A "~user/..."
+    // form refers to another user's home which we can't resolve — leave it
+    // untouched so ssh can expand it itself rather than mangling it into the
+    // current user's home.
+    if rest.is_empty() || rest.starts_with('/') || rest.starts_with('\\') {
         if let Some(home) = dirs::home_dir() {
             let trimmed = rest.trim_start_matches(['/', '\\']);
             return home.join(trimmed).to_string_lossy().into_owned();
@@ -146,6 +154,7 @@ mod tests {
             source: HostSource::Manual,
             status: HostStatus::Unknown,
             last_error: None,
+            last_latency_ms: None,
         }
     }
 
@@ -233,11 +242,26 @@ mod tests {
         assert!(args.contains(&"ops@example.com".to_string()));
         assert!(args.contains(&"2222".to_string()));
         assert!(args.contains(&"exit".to_string()));
-        assert!(args.contains(&"ConnectTimeout=5".to_string()));
+        assert!(args.contains(&"ConnectTimeout=10".to_string()));
         assert!(args.contains(&"BatchMode=yes".to_string()));
         // no -N / -L / -D
         assert!(!args.iter().any(|a| a == "-N"));
         assert!(!args.iter().any(|a| a.starts_with("-L") || a.starts_with("-D") || a.starts_with("-R")));
+    }
+
+    #[test]
+    fn expand_tilde_user_path_is_left_for_ssh() {
+        // `~user` refers to *another* user's home — we cannot resolve it, and
+        // must NOT rewrite it into the current user's home. Leave it for ssh.
+        assert_eq!(expand_tilde("~bob/.ssh/id_ed25519"), "~bob/.ssh/id_ed25519");
+    }
+
+    #[test]
+    fn expand_tilde_current_user_has_no_tilde() {
+        if dirs::home_dir().is_some() {
+            let got = expand_tilde("~/keys/id");
+            assert!(!got.contains('~'), "tilde should be expanded, got {got}");
+        }
     }
 
     #[test]

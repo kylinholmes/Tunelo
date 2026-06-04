@@ -29,7 +29,17 @@ impl Store {
     pub fn load(path: PathBuf) -> AppResult<Self> {
         let initial = if path.exists() {
             match std::fs::read_to_string(&path) {
-                Ok(text) => toml::from_str::<StateFile>(&text).unwrap_or_default(),
+                // A parse failure used to be swallowed into an empty store and
+                // then overwritten on the next save — silent, unrecoverable
+                // data loss. Instead, move the unparseable file aside so it can
+                // be recovered, then start empty.
+                Ok(text) => match toml::from_str::<StateFile>(&text) {
+                    Ok(sf) => sf,
+                    Err(e) => {
+                        backup_corrupt(&path, &e.to_string());
+                        StateFile::default()
+                    }
+                },
                 Err(_) => StateFile::default(),
             }
         } else {
@@ -54,13 +64,14 @@ impl Store {
         self.hosts.read().unwrap().iter().find(|h| h.id == id).cloned()
     }
 
-    /// Update host.status / last_error from a connectivity test result.
-    /// Persists — these signals are useful across restarts ("which host
-    /// failed last time?").
+    /// Update host.status / last_latency_ms / last_error from a connectivity
+    /// test result. Persists — these signals are useful across restarts
+    /// ("which host failed last time, and how fast was it?").
     pub fn set_host_status(
         &self,
         id: Uuid,
         status: HostStatus,
+        last_latency_ms: Option<u32>,
         last_error: Option<String>,
     ) -> AppResult<()> {
         {
@@ -70,6 +81,7 @@ impl Store {
             };
             h.status = status;
             h.last_error = last_error;
+            h.last_latency_ms = last_latency_ms;
         }
         self.persist()
     }
@@ -168,21 +180,24 @@ impl Store {
     }
 
     pub fn delete_host(&self, id: Uuid) -> AppResult<()> {
-        let referencing: Vec<String> = {
-            self.tunnels.read().unwrap()
+        {
+            // Hold the hosts write lock across the reference check + delete so a
+            // concurrent save_tunnel (which takes hosts.read to validate host_id
+            // before inserting) can't slip a new reference in between — that
+            // would leave a tunnel pointing at a deleted host. Lock order is
+            // hosts-before-tunnels everywhere, so this can't deadlock.
+            let mut hosts = self.hosts.write().unwrap();
+            let referencing: Vec<String> = self.tunnels.read().unwrap()
                 .iter()
                 .filter(|t| t.host_id == id)
                 .map(|t| t.name.clone())
-                .collect()
-        };
-        if !referencing.is_empty() {
-            return Err(AppError::new(
-                "host_in_use",
-                format!("被以下隧道引用：{}", referencing.join(", ")),
-            ));
-        }
-        {
-            let mut hosts = self.hosts.write().unwrap();
+                .collect();
+            if !referencing.is_empty() {
+                return Err(AppError::new(
+                    "host_in_use",
+                    format!("被以下隧道引用：{}", referencing.join(", ")),
+                ));
+            }
             let before = hosts.len();
             hosts.retain(|h| h.id != id);
             if hosts.len() == before {
@@ -201,6 +216,9 @@ impl Store {
     pub fn save_tunnel(&self, mut tunnel: Tunnel) -> AppResult<Tunnel> {
         if tunnel.name.trim().is_empty() {
             return Err(AppError::invalid("name 不能为空"));
+        }
+        if tunnel.local_port == 0 {
+            return Err(AppError::invalid("本地端口必须在 1-65535 之间"));
         }
         if !self.hosts.read().unwrap().iter().any(|h| h.id == tunnel.host_id) {
             return Err(AppError::invalid("host_id 不存在"));
@@ -260,10 +278,117 @@ impl Store {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        // Keep the last-good file as a .bak before overwriting, so a single
+        // bad write or a later corruption is recoverable.
+        if self.path.exists() {
+            let bak = self.path.with_extension("toml.bak");
+            let _ = std::fs::copy(&self.path, &bak);
+        }
         let text = toml::to_string_pretty(&snapshot)?;
         let tmp = self.path.with_extension("toml.tmp");
         std::fs::write(&tmp, text)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
+    }
+}
+
+/// Move an unparseable state file aside (timestamped so repeated corruptions
+/// don't clobber earlier backups) and warn, instead of silently discarding it.
+fn backup_corrupt(path: &std::path::Path, err: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bak = path.with_extension(format!("toml.corrupt-{ts}"));
+    let _ = std::fs::rename(path, &bak);
+    eprintln!(
+        "tunelo: state file {} is unparseable ({}); moved to {} and starting empty",
+        path.display(), err, bak.display()
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path() -> PathBuf {
+        std::env::temp_dir().join(format!("tunelo-store-test-{}.toml", Uuid::new_v4()))
+    }
+
+    fn sample_host() -> Host {
+        Host {
+            id: Uuid::nil(),
+            alias: "h".into(),
+            hostname: "h.example".into(),
+            port: 22,
+            user: "me".into(),
+            identity_file: None,
+            proxy_jump: None,
+            source: HostSource::Manual,
+            status: HostStatus::Unknown,
+            last_error: None,
+            last_latency_ms: None,
+        }
+    }
+
+    #[test]
+    fn corrupt_state_file_is_backed_up_not_destroyed() {
+        let path = temp_path();
+        std::fs::write(&path, "this is { not valid toml ][").unwrap();
+        let store = Store::load(path.clone()).unwrap();
+        // starts empty rather than panicking
+        assert!(store.list_hosts().is_empty());
+        // the corrupt content was preserved in a sibling backup, not discarded
+        let dir = path.parent().unwrap();
+        let stem = path.file_name().unwrap().to_string_lossy().into_owned();
+        let backed_up = std::fs::read_dir(dir).unwrap().flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with(&stem) && n.contains(".corrupt")
+        });
+        assert!(backed_up, "expected a .corrupt backup of the unparseable state file");
+    }
+
+    #[test]
+    fn save_tunnel_rejects_zero_local_port() {
+        let store = Store::load(temp_path()).unwrap();
+        let h = store.save_host(sample_host()).unwrap();
+        let t = Tunnel {
+            id: Uuid::nil(), name: "t".into(), kind: TunnelType::L, local_port: 0,
+            bind_address: None, remote_host: Some("db".into()), remote_port: Some(5432),
+            host_id: h.id, keep_alive: true, auto_start: false,
+            status: TunnelStatus::Idle, started_at: None, last_error: None,
+        };
+        assert!(store.save_tunnel(t).is_err());
+    }
+
+    #[test]
+    fn set_host_status_persists_latency() {
+        let path = temp_path();
+        let id = {
+            let store = Store::load(path.clone()).unwrap();
+            let h = store.save_host(sample_host()).unwrap();
+            store.set_host_status(h.id, HostStatus::Ok, Some(42), None).unwrap();
+            h.id
+        };
+        // reload from disk — latency must survive
+        let reloaded = Store::load(path).unwrap();
+        let h = reloaded.get_host(id).unwrap();
+        assert_eq!(h.last_latency_ms, Some(42));
+        assert_eq!(h.status, HostStatus::Ok);
+    }
+
+    #[test]
+    fn delete_host_blocked_while_referenced_then_allowed() {
+        let store = Store::load(temp_path()).unwrap();
+        let h = store.save_host(sample_host()).unwrap();
+        let t = store.save_tunnel(Tunnel {
+            id: Uuid::nil(), name: "t".into(), kind: TunnelType::L, local_port: 5432,
+            bind_address: None, remote_host: Some("db".into()), remote_port: Some(5432),
+            host_id: h.id, keep_alive: true, auto_start: false,
+            status: TunnelStatus::Idle, started_at: None, last_error: None,
+        }).unwrap();
+        assert!(store.delete_host(h.id).is_err(), "referenced host must not delete");
+        store.delete_tunnel(t.id).unwrap();
+        assert!(store.delete_host(h.id).is_ok(), "unreferenced host should delete");
     }
 }

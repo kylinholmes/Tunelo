@@ -52,12 +52,19 @@ impl axum::response::IntoResponse for AppError {
         use axum::http::StatusCode;
         use axum::Json;
 
-        let status = match self.code.as_str() {
-            "not_found" => StatusCode::NOT_FOUND,
-            "invalid_input" => StatusCode::BAD_REQUEST,
-            "host_in_use" => StatusCode::CONFLICT,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        // Known, user-facing codes return their message. Everything else is an
+        // internal error (io/serde/toml — may contain filesystem paths or
+        // library internals); log it server-side but return a generic message
+        // so we don't leak internals to HTTP clients.
+        let (status, message) = match self.code.as_str() {
+            "not_found" => (StatusCode::NOT_FOUND, self.message),
+            "invalid_input" => (StatusCode::BAD_REQUEST, self.message),
+            "host_in_use" => (StatusCode::CONFLICT, self.message),
+            _ => {
+                eprintln!("tunelo: internal error [{}]: {}", self.code, self.message);
+                (StatusCode::INTERNAL_SERVER_ERROR, "内部错误".to_string())
+            }
         };
-        (status, Json(serde_json::json!({ "error": self.message }))).into_response()
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
 }

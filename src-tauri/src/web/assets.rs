@@ -13,18 +13,20 @@ use rust_embed::RustEmbed;
 #[folder = "../dist/"]
 struct Asset;
 
-/// Serve `/` and `/index.html`. The injected script makes the bundled
-/// React app aware it's running over HTTP (not Tauri) and gives it the
-/// auth token to use for API/SSE requests.
-pub async fn index(secret: Option<String>) -> Response {
-    let token = secret.unwrap_or_default();
+/// Serve `/` and `/index.html`. The injected script makes the bundled React
+/// app aware it's running over HTTP (not Tauri) and whether a bearer token is
+/// required. It deliberately does NOT embed the secret — this page is served
+/// without auth, so embedding the token would hand it to any unauthenticated
+/// caller. When auth is required the frontend prompts for the token and stores
+/// it locally (validated against `/api/auth/check`).
+pub async fn index(auth_required: bool) -> Response {
     let mut html = match Asset::get("index.html") {
         Some(f) => String::from_utf8_lossy(f.data.as_ref()).into_owned(),
         None => return (StatusCode::INTERNAL_SERVER_ERROR, "index.html missing").into_response(),
     };
     let inject = format!(
-        "<script>window.__TUNELO_WEB__=true;window.__TUNELO_TOKEN__={};</script>",
-        serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into()),
+        "<script>window.__TUNELO_WEB__=true;window.__TUNELO_AUTH_REQUIRED__={};</script>",
+        if auth_required { "true" } else { "false" },
     );
     if let Some(idx) = html.find("</head>") {
         html.insert_str(idx, &inject);

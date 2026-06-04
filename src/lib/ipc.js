@@ -12,7 +12,37 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const TOKEN = (typeof window !== "undefined" && window.__TUNELO_TOKEN__) || "";
+export const isWeb = typeof window !== "undefined" && window.__TUNELO_WEB__ === true;
+// Whether the web backend requires a bearer token (injected by the Rust server).
+export const authRequired =
+  typeof window !== "undefined" && window.__TUNELO_AUTH_REQUIRED__ === true;
+
+// Bearer token for web mode. The server deliberately NEVER embeds it in the
+// page (that would hand it to any unauthenticated caller); the user supplies it
+// once and we keep it in localStorage. Tauri mode needs no token.
+const TOKEN_KEY = "tunelo_token";
+let TOKEN = (typeof window !== "undefined" && !isTauri)
+  ? (localStorage.getItem(TOKEN_KEY) || "")
+  : "";
+
+export function getToken() { return TOKEN; }
+export function setToken(t) {
+  TOKEN = t || "";
+  try {
+    if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {}
+  closeSse(); // force the event stream to reconnect with the new token
+}
+export function clearToken() { setToken(""); }
+
+// Verify the current token against the backend; true if accepted (or if no auth
+// is required). Used by the login gate before loading data.
+export async function checkAuth() {
+  if (!authRequired) return true;
+  try { await httpGet("/auth/check"); return true; }
+  catch { return false; }
+}
 
 // ─── HTTP helpers ───
 
@@ -148,6 +178,10 @@ function ensureSse() {
   return _sseSource;
 }
 
+function closeSse() {
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+}
+
 function sseSubscribe(topic, handler) {
   const src = ensureSse();
   const wrap = (e) => {
@@ -189,6 +223,20 @@ export function onHostStatusChange(handler) {
     return () => { cancelled = true; unlisten(); };
   }
   return sseSubscribe("host:status-changed", handler);
+}
+
+// When the SSE stream drops events (slow client → `lagged`) or reconnects after
+// an error, the live state may be stale and callers should re-fetch. No-op in
+// Tauri (its event delivery doesn't drop). The first `open` is skipped since the
+// initial load already fetched.
+export function onResyncNeeded(handler) {
+  if (isTauri) return () => {};
+  const offLagged = sseSubscribe("lagged", () => handler());
+  const src = ensureSse();
+  let opened = src.readyState === 1;
+  const onOpen = () => { if (opened) handler(); else opened = true; };
+  src.addEventListener("open", onOpen);
+  return () => { offLagged(); src.removeEventListener("open", onOpen); };
 }
 
 export const NIL_UUID = "00000000-0000-0000-0000-000000000000";

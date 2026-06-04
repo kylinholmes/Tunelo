@@ -112,19 +112,13 @@ export default function SettingsPage() {
               onCommit={v => commit({ ssh_path: v.trim() || null })}
             />
           </Row>
-          <Row label="ssh config 路径" sub="解析此文件用于导入主机和隧道。">
+          <Row label="ssh config 路径" sub="解析此文件用于导入主机和隧道（在 Hosts / Tunnels 页手动导入）。">
             <PathInput
               value={s.ssh_config_path || ""}
               placeholder="~/.ssh/config"
               onCommit={v => commit({ ssh_config_path: v.trim() || null })}
             />
           </Row>
-          <ToggleRow
-            label="启动时自动同步 ssh config"
-            sub="把新增的主机合并进列表，不覆盖你在 UI 里改过的字段。"
-            checked={s.auto_sync_ssh_config}
-            onChange={v => commit({ auto_sync_ssh_config: v })}
-          />
         </Section>
 
         <Section title="关于">

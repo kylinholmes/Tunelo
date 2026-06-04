@@ -22,7 +22,7 @@ pub fn build_router(
     use crate::web::routes::{events, hosts, import, settings, tunnels};
     use axum::routing::{delete, post};
 
-    let secret_for_index = secret.clone();
+    let auth_required = secret.is_some();
 
     let api = Router::new()
         // hosts
@@ -37,6 +37,9 @@ pub fn build_router(
         .route("/tunnels/:id/restart", post(tunnels::restart))
         // settings
         .route("/settings", get(settings::get).post(settings::save))
+        // auth probe — succeeds (200) only if the bearer token is valid, so the
+        // login UI can verify a pasted token; 401 from the middleware otherwise.
+        .route("/auth/check", get(|| async { axum::Json(serde_json::json!({ "ok": true })) }))
         // ssh-config
         .route("/ssh-config/hosts", get(import::parse_hosts))
         .route("/ssh-config/tunnels", get(import::parse_tunnels))
@@ -47,7 +50,10 @@ pub fn build_router(
 
     let events_router = Router::new()
         .route("/events", get(events::stream))
-        .layer(axum::middleware::from_fn(crate::web::auth::require_secret));
+        // SSE accepts ?token= (EventSource can't set headers) — distinct from
+        // the header-only API auth.
+        .layer(axum::middleware::from_fn(crate::web::auth::require_secret_sse))
+        .layer(Extension(crate::web::sse::SseLimiter::new(64)));
 
     // Order matters: /api and /events are specific prefixes mounted via
     // nest/merge. The static-asset fallback catches everything else and
@@ -58,16 +64,12 @@ pub fn build_router(
         .nest("/api", api)
         .merge(events_router)
         .fallback({
-            let s = secret_for_index.clone();
-            move |uri: axum::http::Uri| {
-                let s = s.clone();
-                async move {
-                    let path = uri.path().trim_start_matches('/');
-                    if path.is_empty() || path == "index.html" {
-                        assets::index(s).await
-                    } else {
-                        assets::asset(axum::extract::Path(path.to_string())).await
-                    }
+            move |uri: axum::http::Uri| async move {
+                let path = uri.path().trim_start_matches('/');
+                if path.is_empty() || path == "index.html" {
+                    assets::index(auth_required).await
+                } else {
+                    assets::asset(axum::extract::Path(path.to_string())).await
                 }
             }
         })

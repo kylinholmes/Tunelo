@@ -35,6 +35,16 @@ export default function TunnelsPage({ tunnels, hosts, onTunnelAction, onSaveTunn
     if (ok) exitSelectMode();
   };
 
+  const bulkAction = async (action) => {
+    if (selectedIds.size === 0) return;
+    // onTunnelAction handles per-item errors (toast) and is a no-op for
+    // missing ids; run sequentially to keep failures legible.
+    for (const id of selectedIds) {
+      await onTunnelAction(id, action);
+    }
+    exitSelectMode();
+  };
+
   // Consume one-shot intents on mount so re-navigating here later doesn't
   // re-open the same Drawer/Modal.
   React.useEffect(() => {
@@ -74,6 +84,15 @@ export default function TunnelsPage({ tunnels, hosts, onTunnelAction, onSaveTunn
             </span>
             <button className="btn sm ghost" onClick={() => setSelectedIds(new Set(tunnels.map(t => t.id)))}>全选</button>
             <button className="btn sm ghost" onClick={() => setSelectedIds(new Set())}>全不选</button>
+            <button className="btn sm" disabled={selectedIds.size === 0} onClick={() => bulkAction("start")}>
+              <Icon name="play" size={11}/> 启动
+            </button>
+            <button className="btn sm" disabled={selectedIds.size === 0} onClick={() => bulkAction("stop")}>
+              <Icon name="stop" size={11}/> 停止
+            </button>
+            <button className="btn sm" disabled={selectedIds.size === 0} onClick={() => bulkAction("restart")}>
+              <Icon name="restart" size={11}/> 重启
+            </button>
             <div style={{ flex: 1 }}/>
             <button className="btn danger solid" disabled={selectedIds.size === 0} onClick={bulkDelete}>
               <Icon name="trash" size={12}/> 删除选中
@@ -149,7 +168,7 @@ export default function TunnelsPage({ tunnels, hosts, onTunnelAction, onSaveTunn
               </>
         )}
       >
-        {sel && <TunnelDetail tunnel={sel} host={hostById(sel.host_id, hosts)}/>}
+        {sel && <TunnelDetail tunnel={sel} host={hostById(sel.host_id, hosts)} hosts={hosts}/>}
       </Drawer>
 
       <Drawer
@@ -204,6 +223,14 @@ const TUNNEL_ROW_COLS_SELECT = "20px 34px 160px minmax(180px, 1fr) 140px 160px 7
 function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSelect, onAction, onEdit }) {
   const isUp = ["connected", "reconnecting"].includes(tunnel.status);
   const isProblem = ["failed", "reconnecting"].includes(tunnel.status);
+  const transitioning = ["connecting", "stopping"].includes(tunnel.status);
+  const [busy, setBusy] = React.useState(false);
+  const act = async (e, action) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try { await onAction(action); } finally { setBusy(false); }
+  };
   const handleClick = () => {
     if (selectMode) onToggleSelect?.();
     else onSelect?.();
@@ -289,10 +316,30 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
         </span>
       </span>
 
-      {/* start/stop — hidden in select mode (also dropped from template) */}
-      {!selectMode && (isUp
+      {/* start/stop — hidden in select mode (also dropped from template).
+          While the tunnel is transitioning (connecting/stopping) or an action
+          is in flight the button is disabled so a rapid second click can't fire
+          a conflicting command. */}
+      {!selectMode && (transitioning
         ? <button
-            onClick={(e) => { e.stopPropagation(); onAction("stop"); }}
+            disabled
+            title={tunnel.status === "connecting" ? "连接中" : "停止中"}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              height: 32, padding: "0 12px 0 10px",
+              border: "1px solid var(--border)",
+              background: "var(--bg-2)",
+              color: "var(--fg-3)",
+              fontSize: "var(--fs-xs)", fontWeight: 600,
+              cursor: "default",
+            }}
+          >
+            <Icon name="sync" size={12} className="spin"/> {tunnel.status === "connecting" ? "连接中" : "停止中"}
+          </button>
+        : isUp
+        ? <button
+            onClick={(e) => act(e, "stop")}
+            disabled={busy}
             title="停止"
             style={{
               display: "inline-flex", alignItems: "center", gap: 6,
@@ -301,12 +348,14 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
               background: "color-mix(in oklch, var(--fail) 10%, var(--bg-1))",
               color: "var(--fail)",
               fontSize: "var(--fs-xs)", fontWeight: 600,
+              opacity: busy ? 0.5 : 1,
             }}
           >
             <Icon name="stop" size={12}/> 停止
           </button>
         : <button
-            onClick={(e) => { e.stopPropagation(); onAction("start"); }}
+            onClick={(e) => act(e, "start")}
+            disabled={busy}
             title="启动"
             style={{
               display: "inline-flex", alignItems: "center", gap: 6,
@@ -315,6 +364,7 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
               background: "var(--accent)",
               color: "#07120c",
               fontSize: "var(--fs-xs)", fontWeight: 700,
+              opacity: busy ? 0.5 : 1,
             }}
           >
             <Icon name="play" size={12}/> 启动
@@ -337,7 +387,11 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
   );
 }
 
-function TunnelDetail({ tunnel, host }) {
+function TunnelDetail({ tunnel, host, hosts = [] }) {
+  const bind = tunnel.bind_address || "127.0.0.1";
+  const endpoint = tunnel.type === "D"
+    ? `socks5://${bind}:${tunnel.local_port}`
+    : `${bind}:${tunnel.local_port}`;
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 18, rowGap: 14, alignItems: "center", marginBottom: 20 }}>
@@ -362,8 +416,18 @@ function TunnelDetail({ tunnel, host }) {
           })()}
         </span>
 
+        {(tunnel.type === "L" || tunnel.type === "D") && (
+          <>
+            <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>{tunnel.type === "D" ? "代理地址" : "本地连接"}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <span className="mono" style={{ fontSize: "var(--fs-sm)", overflow: "hidden", textOverflow: "ellipsis" }}>{endpoint}</span>
+              <CopyButton text={endpoint}/>
+            </span>
+          </>
+        )}
+
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>经</span>
-        <span style={{ fontSize: "var(--fs-sm)" }}>{host && <ProxyChain host={host}/>}</span>
+        <span style={{ fontSize: "var(--fs-sm)" }}>{host && <ProxyChain host={host} hosts={hosts}/>}</span>
 
         <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>状态</span>
         <span><StatusPill status={tunnel.status}/></span>
@@ -389,16 +453,36 @@ function TunnelDetail({ tunnel, host }) {
         </div>
       )}
 
-      <div className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
-        等价 ssh 命令
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+        <span className="dim-2" style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", letterSpacing: ".06em" }}>等价 ssh 命令</span>
+        <div style={{ flex: 1 }}/>
+        <CopyButton text={sshCommand(tunnel, host, hosts)}/>
       </div>
       <pre style={{
         background: "var(--bg-2)", border: "1px solid var(--border)",
         borderRadius: "var(--radius)", padding: "12px 14px", margin: 0,
         fontFamily: "var(--mono)", fontSize: "var(--fs-sm)", color: "var(--fg-1)",
         whiteSpace: "pre-wrap", lineHeight: 1.6,
-      }}>{sshCommand(tunnel, host)}</pre>
+      }}>{sshCommand(tunnel, host, hosts)}</pre>
     </div>
+  );
+}
+
+// Copy-to-clipboard button with brief confirmation.
+function CopyButton({ text, label = "复制" }) {
+  const [done, setDone] = React.useState(false);
+  const copy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), 1200);
+    } catch {}
+  };
+  return (
+    <button type="button" className="btn sm ghost" onClick={copy} title="复制到剪贴板">
+      <Icon name={done ? "check" : "copy"} size={11}/> {done ? "已复制" : label}
+    </button>
   );
 }
 

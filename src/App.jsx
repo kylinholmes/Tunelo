@@ -31,6 +31,50 @@ export default function App() {
   );
 }
 
+// Web-mode token login. Shown only when the backend requires a bearer token and
+// we don't have a valid one yet. Self-contained inline styles since it renders
+// outside the themed `.app` container.
+function TokenGate({ checking, onSubmit }) {
+  const [token, setToken] = React.useState("");
+  const [err, setErr] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!token.trim() || busy) return;
+    setBusy(true);
+    setErr(false);
+    const ok = await onSubmit(token.trim());
+    setBusy(false);
+    if (!ok) setErr(true);
+  };
+
+  const disabled = checking || busy || !token.trim();
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#0c0f0d", color: "#e8efe9", fontFamily: "system-ui, sans-serif" }}>
+      <form onSubmit={submit} style={{ width: 340, padding: 28, border: "1px solid #243029", borderRadius: 10 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Tunelo</div>
+        <div style={{ fontSize: 13, color: "#8aa094", marginBottom: 18 }}>
+          {checking ? "正在验证…" : "此实例需要访问令牌（--secret）"}
+        </div>
+        <input
+          type="password"
+          autoFocus
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          placeholder="访问令牌 / token"
+          disabled={checking || busy}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 6, border: `1px solid ${err ? "#e0564f" : "#2c3a31"}`, background: "#0c100e", color: "#e8efe9", fontSize: 14, boxSizing: "border-box" }}
+        />
+        {err && <div style={{ color: "#e0564f", fontSize: 12, marginTop: 8 }}>令牌无效，请重试</div>}
+        <button type="submit" disabled={disabled} style={{ marginTop: 16, width: "100%", padding: "10px 12px", borderRadius: 6, border: 0, background: "#58e2a3", color: "#07120c", fontWeight: 700, fontSize: 14, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }}>
+          {busy ? "验证中…" : "进入"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function AppInner() {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -42,8 +86,26 @@ function AppInner() {
   const [tunnels, setTunnels] = React.useState([]);
   const [loaded, setLoaded] = React.useState(false);
 
-  // Initial load from Rust (or mock fallback in browser dev mode)
+  // Web auth gate. In Tauri or loopback-no-secret mode no token is needed, so
+  // we're authed immediately; otherwise validate any stored token, and if it's
+  // missing/invalid show the token login screen before loading any data.
+  const [authed, setAuthed] = React.useState(!ipc.authRequired);
+  const [authChecking, setAuthChecking] = React.useState(ipc.authRequired);
+
   React.useEffect(() => {
+    if (!ipc.authRequired) return;
+    let cancelled = false;
+    ipc.checkAuth().then(ok => {
+      if (cancelled) return;
+      setAuthed(ok);
+      setAuthChecking(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Initial load from the backend — only once authenticated.
+  React.useEffect(() => {
+    if (!authed) return;
     let cancelled = false;
     (async () => {
       try {
@@ -58,7 +120,7 @@ function AppInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [authed]);
 
   const reloadHosts = React.useCallback(async () => {
     setHosts(await ipc.listHosts());
@@ -87,6 +149,7 @@ function AppInner() {
   // Subscribe to runtime status events — both real (Tauri) and mock modes
   // converge on the same payload shape via lib/ipc.js.
   React.useEffect(() => {
+    if (!authed) return;
     const off = ipc.onTunnelStatusChange((p) => {
       setTunnels(ts => ts.map(t => t.id === p.id
         ? { ...t, status: p.status, started_at: p.started_at, last_error: p.last_error }
@@ -94,18 +157,30 @@ function AppInner() {
       ));
     });
     return off;
-  }, []);
+  }, [authed]);
 
   // Host status (connectivity test results) likewise stream in via events.
   React.useEffect(() => {
+    if (!authed) return;
     const off = ipc.onHostStatusChange((p) => {
       setHosts(hs => hs.map(h => h.id === p.id
-        ? { ...h, status: p.status, last_error: p.last_error }
+        ? { ...h, status: p.status, last_error: p.last_error, last_latency_ms: p.last_latency_ms ?? h.last_latency_ms }
         : h
       ));
     });
     return off;
-  }, []);
+  }, [authed]);
+
+  // SSE can drop events (lagged) or reconnect after an error; re-fetch the
+  // full lists to resync so the UI never silently shows stale status.
+  React.useEffect(() => {
+    if (!authed) return;
+    const off = ipc.onResyncNeeded(() => {
+      ipc.listHosts().then(setHosts).catch(() => {});
+      ipc.listTunnels().then(setTunnels).catch(() => {});
+    });
+    return off;
+  }, [authed]);
 
   const tunnelAction = async (id, action) => {
     if (!id) return;
@@ -213,6 +288,21 @@ function AppInner() {
     await reloadTunnels();
     return saved;
   };
+
+  if (ipc.authRequired && !authed) {
+    return (
+      <TokenGate
+        checking={authChecking}
+        onSubmit={async (token) => {
+          ipc.setToken(token);
+          const ok = await ipc.checkAuth();
+          if (ok) setAuthed(true);
+          else ipc.clearToken();
+          return ok;
+        }}
+      />
+    );
+  }
 
   const appStyle = {
     "--accent": t.accent,

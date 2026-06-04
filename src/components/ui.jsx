@@ -128,9 +128,11 @@ export const KV = ({ label, children, mono }) => (
   </div>
 );
 
-// ProxyJump chain visualization
-export const ProxyChain = ({ host, compact }) => {
-  const chain = proxyChain(host);
+// ProxyJump chain visualization. `hosts` is required to resolve the jump
+// hops — without it proxyChain can't follow proxy_jump ids and collapses to a
+// single host.
+export const ProxyChain = ({ host, hosts = [], compact }) => {
+  const chain = proxyChain(host, hosts);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
       {chain.map((h, i) => (

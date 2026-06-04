@@ -10,12 +10,8 @@ pub struct AppSettings {
     pub ssh_path: Option<String>,
     #[serde(default)]
     pub ssh_config_path: Option<String>,
-    #[serde(default)]
-    pub auto_start_on_boot: bool,
     #[serde(default = "default_true")]
     pub auto_connect_on_boot: bool,
-    #[serde(default = "default_true")]
-    pub auto_sync_ssh_config: bool,
     #[serde(default = "default_true")]
     pub minimize_to_tray_on_close: bool,
     /// Bearer token required for HTTP API access when running with
@@ -32,9 +28,7 @@ impl Default for AppSettings {
         Self {
             ssh_path: detect_ssh_path(),
             ssh_config_path: detect_ssh_config_path(),
-            auto_start_on_boot: false,
             auto_connect_on_boot: true,
-            auto_sync_ssh_config: true,
             minimize_to_tray_on_close: true,
             web_secret: None,
         }

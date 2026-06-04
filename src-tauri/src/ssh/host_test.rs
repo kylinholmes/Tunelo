@@ -21,11 +21,12 @@ pub struct TestResult {
 struct HostStatusPayload {
     id: Uuid,
     status: HostStatus,
+    last_latency_ms: Option<u32>,
     last_error: Option<String>,
 }
 
-fn emit(ctx: &AppContext, id: Uuid, status: HostStatus, last_error: Option<String>) {
-    let payload = serde_json::to_value(HostStatusPayload { id, status, last_error })
+fn emit(ctx: &AppContext, id: Uuid, status: HostStatus, last_latency_ms: Option<u32>, last_error: Option<String>) {
+    let payload = serde_json::to_value(HostStatusPayload { id, status, last_latency_ms, last_error })
         .unwrap_or(serde_json::Value::Null);
     ctx.sink.emit("host:status-changed", payload);
 }
@@ -36,8 +37,8 @@ fn emit(ctx: &AppContext, id: Uuid, status: HostStatus, last_error: Option<Strin
 pub async fn test_host(ctx: &AppContext, id: Uuid, deep: bool) -> AppResult<TestResult> {
     let host = ctx.store.get_host(id).ok_or_else(|| AppError::not_found("host"))?;
 
-    let _ = ctx.store.set_host_status(id, HostStatus::Checking, None);
-    emit(ctx, id, HostStatus::Checking, None);
+    let _ = ctx.store.set_host_status(id, HostStatus::Checking, None, None);
+    emit(ctx, id, HostStatus::Checking, None, None);
 
     let result: Result<u32, String> = if deep {
         let settings = ctx.settings.get();
@@ -45,14 +46,16 @@ pub async fn test_host(ctx: &AppContext, id: Uuid, deep: bool) -> AppResult<Test
             Some(p) if !p.trim().is_empty() => p,
             _ => {
                 let msg = "ssh 可执行路径未配置".to_string();
-                let _ = ctx.store.set_host_status(id, HostStatus::Fail, Some(msg.clone()));
-                emit(ctx, id, HostStatus::Fail, Some(msg.clone()));
+                let _ = ctx.store.set_host_status(id, HostStatus::Fail, None, Some(msg.clone()));
+                emit(ctx, id, HostStatus::Fail, None, Some(msg.clone()));
                 return Ok(TestResult { ok: false, latency_ms: None, error: Some(msg) });
             }
         };
         let all_hosts = ctx.store.list_hosts();
         let args = command::build_test_args(&host, &all_hosts);
-        probe::ssh_test(&ssh_path, &args, 8000).await
+        // Generous wall-clock bound so the ssh-level ConnectTimeout (10s) can
+        // fire on a slow link before we force-kill the probe.
+        probe::ssh_test(&ssh_path, &args, 13000).await
     } else {
         let hostname = host.hostname.clone();
         let port = host.port;
@@ -65,8 +68,8 @@ pub async fn test_host(ctx: &AppContext, id: Uuid, deep: bool) -> AppResult<Test
         Ok(ms) => (HostStatus::Ok, None, Some(*ms)),
         Err(e) => (HostStatus::Fail, Some(e.clone()), None),
     };
-    let _ = ctx.store.set_host_status(id, status, last_error.clone());
-    emit(ctx, id, status, last_error.clone());
+    let _ = ctx.store.set_host_status(id, status, latency, last_error.clone());
+    emit(ctx, id, status, latency, last_error.clone());
 
     Ok(TestResult {
         ok: result.is_ok(),

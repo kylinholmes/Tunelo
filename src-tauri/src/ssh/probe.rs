@@ -1,16 +1,40 @@
 use std::time::{Duration, Instant};
 
-// Pre-flight port conflict check. We try to bind 127.0.0.1:port and
-// release immediately — if bind fails the port is already in use and ssh
-// will fail to set up the forward anyway, but this gives a friendlier
-// error before we spawn the subprocess.
-pub fn check_local_port_free(port: u16) -> Result<(), String> {
-    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+// Pre-flight port conflict check. We try to bind `bind_addr:port` and release
+// immediately — if bind fails the port is already in use on that interface and
+// ssh will fail to set up the forward anyway, but this gives a friendlier error
+// before we spawn the subprocess. We bind the SAME address the forward will use
+// (e.g. 0.0.0.0 vs 127.0.0.1) so a 0.0.0.0 forward isn't checked against
+// loopback only. This is a best-effort, racy pre-check (TOCTOU before ssh
+// binds); ExitOnForwardFailure is the real guard.
+pub fn check_local_port_free(bind_addr: &str, port: u16) -> Result<(), String> {
+    let addr = if bind_addr.trim().is_empty() { "127.0.0.1" } else { bind_addr };
+    match std::net::TcpListener::bind((addr, port)) {
         Ok(listener) => {
             drop(listener);
             Ok(())
         }
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_check_detects_in_use_port() {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        assert!(check_local_port_free("127.0.0.1", port).is_err());
+    }
+
+    #[test]
+    fn port_check_empty_bind_defaults_to_loopback() {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        // empty bind addr must be treated as loopback, so the conflict is seen
+        assert!(check_local_port_free("", port).is_err());
     }
 }
 
