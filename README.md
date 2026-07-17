@@ -5,6 +5,8 @@
 **简单好用的 SSH 隧道管理器**
 
 [![Release](https://img.shields.io/github/v/release/kylinholmes/Tunelo?color=blue)](https://github.com/kylinholmes/Tunelo/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/kylinholmes/Tunelo/release.yml?label=build)](https://github.com/kylinholmes/Tunelo/actions/workflows/release.yml)
+[![Downloads](https://img.shields.io/github/downloads/kylinholmes/Tunelo/total?color=success)](https://github.com/kylinholmes/Tunelo/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/kylinholmes/Tunelo/releases)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
