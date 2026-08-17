@@ -19,6 +19,15 @@ pub struct AppSettings {
     /// loopback address (enforced at startup in web/server.rs).
     #[serde(default)]
     pub web_secret: Option<String>,
+    /// UI theme id — a built-in id or the id of one of `custom_themes`.
+    /// None = app default. The frontend owns the id space.
+    #[serde(default)]
+    pub theme: Option<String>,
+    /// User-defined colour schemes (Windows Terminal scheme JSON plus
+    /// id/name). Stored opaque so the frontend can evolve the format
+    /// without a Rust change; only string values are expected.
+    #[serde(default)]
+    pub custom_themes: Vec<serde_json::Value>,
 }
 
 fn default_true() -> bool { true }
@@ -31,6 +40,8 @@ impl Default for AppSettings {
             auto_connect_on_boot: true,
             minimize_to_tray_on_close: true,
             web_secret: None,
+            theme: None,
+            custom_themes: Vec::new(),
         }
     }
 }
@@ -133,5 +144,40 @@ fn path_is_valid_file(p: &Option<String>) -> bool {
     match p {
         Some(s) if !s.trim().is_empty() => std::path::Path::new(s).is_file(),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_themes_round_trip_through_toml() {
+        let mut s = AppSettings::default();
+        s.theme = Some("custom-abc".into());
+        s.custom_themes = vec![serde_json::json!({
+            "id": "custom-abc", "name": "Mine", "accent": "blue",
+            "background": "#1a1b26", "foreground": "#c0caf5",
+            "black": "#15161e", "red": "#f7768e", "green": "#9ece6a", "yellow": "#e0af68",
+            "blue": "#7aa2f7", "purple": "#bb9af7", "cyan": "#7dcfff", "white": "#a9b1d6",
+            "brightBlack": "#414868", "brightRed": "#f7768e", "brightGreen": "#9ece6a", "brightYellow": "#e0af68",
+            "brightBlue": "#7aa2f7", "brightPurple": "#bb9af7", "brightCyan": "#7dcfff", "brightWhite": "#c0caf5"
+        })];
+        let text = toml::to_string_pretty(&s).expect("serialize");
+        assert!(text.contains("[[custom_themes]]"), "{text}");
+        let back: AppSettings = toml::from_str(&text).expect("deserialize");
+        assert_eq!(back.theme.as_deref(), Some("custom-abc"));
+        assert_eq!(back.custom_themes, s.custom_themes);
+    }
+
+    #[test]
+    fn old_settings_without_theme_fields_still_load() {
+        let text = "auto_connect_on_boot = false
+minimize_to_tray_on_close = true
+";
+        let s: AppSettings = toml::from_str(text).expect("deserialize");
+        assert!(s.theme.is_none());
+        assert!(s.custom_themes.is_empty());
+        assert!(!s.auto_connect_on_boot);
     }
 }

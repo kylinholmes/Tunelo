@@ -1,7 +1,8 @@
 import React from "react";
 
 // Simplified replacement for the design-tool useTweaks hook.
-// Persists theme/density/nav choices via localStorage.
+// Persists purely-local UI choices (nav layout, corner radius) via localStorage.
+// The theme is NOT here — it lives in settings.toml (see App.jsx).
 const KEY = "freetunnel.tweaks";
 
 export function useTweaks(defaults) {

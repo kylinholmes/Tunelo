@@ -19,12 +19,12 @@
         letter-spacing: 0.18em;
       }
       #boot-splash .name {
-        font-size: 22px; font-weight: 600; color: #e6e8eb;
+        font-size: 22px; font-weight: 600; color: var(--splash-fg, #e6e8eb);
         opacity: 0.92;
       }
       #boot-splash .bar {
         width: 88px; height: 2px;
-        background: linear-gradient(90deg, transparent, #58e2a3, transparent);
+        background: linear-gradient(90deg, transparent, var(--splash-accent, #58e2a3), transparent);
         background-size: 200% 100%;
         animation: boot-shimmer 1.2s linear infinite;
       }

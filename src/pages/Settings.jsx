@@ -1,15 +1,17 @@
 import React from "react";
 import { Icon, Toggle } from "../components/ui";
+import ThemePicker from "../components/ThemePicker";
+import { resolveTheme, accentOf, DEFAULT_THEME_ID } from "../lib/themes";
 import * as ipc from "../lib/ipc";
 import { useNotify } from "../components/Confirm";
 
-// Settings — backed by Rust's AppSettings via get_settings / save_settings.
-// Toggle changes save immediately; text fields save on blur to avoid an
-// IPC round-trip per keystroke.
+// Settings — Rust's AppSettings (settings.toml). App owns the loaded object
+// and the write path (`onPatch`); this page only renders it and reports
+// save status. Toggle changes save immediately; text fields save on blur to
+// avoid an IPC round-trip per keystroke.
 
-export default function SettingsPage() {
+export default function SettingsPage({ settings: s, settingsError, onPatch }) {
   const notify = useNotify();
-  const [s, setS] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState(null);
   const [error, setError] = React.useState(null);
@@ -20,9 +22,6 @@ export default function SettingsPage() {
   const [version, setVersion] = React.useState("");
 
   React.useEffect(() => {
-    ipc.getSettings()
-      .then(setS)
-      .catch(e => setError(e.message || String(e)));
     ipc.isAutostartEnabled()
       .then(setAutostart)
       .catch(() => {});
@@ -42,19 +41,13 @@ export default function SettingsPage() {
 
   const commit = async (patch) => {
     if (!s) return;
-    const next = { ...s, ...patch };
-    setS(next);
     setSaving(true);
     setError(null);
     try {
-      const saved = await ipc.saveSettings(next);
-      setS(saved);
+      await onPatch(patch);
       setSavedAt(Date.now());
     } catch (e) {
       setError(e.message || String(e));
-      // pull canonical state back on failure so we don't lie about what's saved
-      const fresh = await ipc.getSettings().catch(() => next);
-      setS(fresh);
     } finally {
       setSaving(false);
     }
@@ -64,13 +57,13 @@ export default function SettingsPage() {
     return (
       <div className="page" style={{ overflow: "auto" }}>
         <div style={{ padding: 40 }}>
-          {error
+          {settingsError
             ? <div style={{
                 border: "1px solid color-mix(in oklch, var(--fail) 30%, var(--border))",
                 background: "color-mix(in oklch, var(--fail) 6%, var(--bg-1))",
                 borderRadius: "var(--radius)", padding: "12px 14px",
                 fontSize: "var(--fs-sm)", color: "var(--fail)",
-              }}>加载设置失败: {error}</div>
+              }}>加载设置失败: {settingsError}</div>
             : <div className="dim">加载设置中…</div>
           }
         </div>
@@ -121,13 +114,17 @@ export default function SettingsPage() {
           </Row>
         </Section>
 
+        <Section title="外观">
+          <AppearanceRow settings={s} onCommit={commit}/>
+        </Section>
+
         <Section title="关于">
           <div style={{ display: "flex", alignItems: "center", gap: 18, padding: "16px 0" }}>
             <div style={{
               width: 52, height: 52, borderRadius: 12,
               display: "grid", placeItems: "center",
               background: "linear-gradient(135deg, var(--accent), color-mix(in oklch, var(--accent) 60%, #2eaf78))",
-              color: "#07120c", fontWeight: 800, fontSize: 22, letterSpacing: "-0.04em",
+              color: "var(--on-accent)", fontWeight: 800, fontSize: 22, letterSpacing: "-0.04em",
             }}>TL</div>
             <div>
               <div style={{ fontSize: 16, fontWeight: 600 }}>Tunelo</div>
@@ -146,6 +143,47 @@ export default function SettingsPage() {
           </div>
         </Section>
       </div>
+    </div>
+  );
+}
+
+// Theme picker is collapsed behind a summary row by default — the full grid
+// is tall and only needed when actually switching.
+function AppearanceRow({ settings, onCommit }) {
+  const [open, setOpen] = React.useState(false);
+  const themeId = settings.theme || DEFAULT_THEME_ID;
+  const customThemes = settings.custom_themes || [];
+  const active = resolveTheme(themeId, customThemes);
+  return (
+    <div style={{ borderBottom: "1px solid var(--border)" }}>
+      <button
+        type="button"
+        className="appearance-row"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: "var(--fs-md)" }}>主题</div>
+          <div className="dim-2" style={{ fontSize: "var(--fs-xs)", marginTop: 3 }}>内置 20 余套终端配色，或粘贴 Windows Terminal 配色方案自定义。</div>
+        </div>
+        <div className="appearance-current">
+          <span className="appearance-swatch" style={{ background: active.background, borderColor: accentOf(active) }}>
+            <span style={{ background: active.red }}/><span style={{ background: accentOf(active) }}/><span style={{ background: active.blue }}/>
+          </span>
+          <span className="tr">{active.name}</span>
+          <Icon name="chevron-down" size={13} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", color: "var(--fg-3)" }}/>
+        </div>
+      </button>
+      {open && (
+        <div className="fade-in" style={{ padding: "4px 0 18px" }}>
+          <ThemePicker
+            value={themeId}
+            customThemes={customThemes}
+            onChange={id => onCommit({ theme: id })}
+            onCustomThemesChange={(list, selectId) => onCommit({ custom_themes: list, ...(selectId ? { theme: selectId } : {}) })}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -115,10 +115,10 @@ export default function DashboardPage({ tunnels, hosts, onNavigate, onTunnelActi
 function IdleRow({ tunnel, host, onStart, onOpen }) {
   const typeColor = tunnel.type === "L" ? "var(--info)"
     : tunnel.type === "R" ? "var(--accent)"
-    : "#c084fc";
+    : "var(--purple)";
   const typeBg = tunnel.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))"
     : tunnel.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))"
-    : "color-mix(in oklch, #c084fc 18%, var(--bg-2))";
+    : "color-mix(in oklch, var(--purple) 18%, var(--bg-2))";
   return (
     <div
       style={{
@@ -152,7 +152,7 @@ function IdleRow({ tunnel, host, onStart, onOpen }) {
           onClick={onStart}
           style={{
             background: "var(--accent)",
-            color: "#07120c",
+            color: "var(--on-accent)",
             borderColor: "var(--accent)",
             fontWeight: 700,
           }}
@@ -252,7 +252,7 @@ function StepCard({ n, done, active, icon, title, desc, primary, secondary }) {
             : active
               ? "color-mix(in oklch, var(--accent) 22%, var(--bg-2))"
               : "var(--bg-2)",
-          color: done ? "#07120c" : active ? "var(--accent)" : "var(--fg-3)",
+          color: done ? "var(--on-accent)" : active ? "var(--accent)" : "var(--fg-3)",
           fontWeight: 700, fontSize: 14,
           fontFamily: "var(--mono)",
           flexShrink: 0,
@@ -446,8 +446,8 @@ function OnlineRow({ tunnel, host, onOpen }) {
         <span className="mono" style={{
           display: "inline-grid", placeItems: "center",
           width: 20, height: 20, borderRadius: 4,
-          background: tunnel.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : tunnel.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, #c084fc 18%, var(--bg-2))",
-          color: tunnel.type === "L" ? "var(--info)" : tunnel.type === "R" ? "var(--accent)" : "#c084fc",
+          background: tunnel.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : tunnel.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, var(--purple) 18%, var(--bg-2))",
+          color: tunnel.type === "L" ? "var(--info)" : tunnel.type === "R" ? "var(--accent)" : "var(--purple)",
           fontSize: 10, fontWeight: 700, flexShrink: 0,
         }}>{tunnel.type}</span>
         <span style={{ fontWeight: 500 }}>{tunnel.name}</span>

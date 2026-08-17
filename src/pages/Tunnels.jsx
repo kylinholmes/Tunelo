@@ -270,8 +270,8 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
       <span className="mono" style={{
         display: "inline-grid", placeItems: "center",
         width: 34, height: 34,
-        background: tunnel.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : tunnel.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, #c084fc 18%, var(--bg-2))",
-        color: tunnel.type === "L" ? "var(--info)" : tunnel.type === "R" ? "var(--accent)" : "#c084fc",
+        background: tunnel.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : tunnel.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, var(--purple) 18%, var(--bg-2))",
+        color: tunnel.type === "L" ? "var(--info)" : tunnel.type === "R" ? "var(--accent)" : "var(--purple)",
         fontSize: 14, fontWeight: 700,
       }}>{tunnel.type}</span>
 
@@ -362,7 +362,7 @@ function TunnelCard({ tunnel, host, selectMode, selected, onToggleSelect, onSele
               height: 32, padding: "0 12px 0 10px",
               border: "1px solid var(--accent)",
               background: "var(--accent)",
-              color: "#07120c",
+              color: "var(--on-accent)",
               fontSize: "var(--fs-xs)", fontWeight: 700,
               opacity: busy ? 0.5 : 1,
             }}
@@ -780,8 +780,8 @@ function ImportFromSshConfigModal({ open, onClose, onImported, hosts }) {
                 <span className="mono" style={{
                   display: "inline-grid", placeItems: "center", width: 22, height: 22, borderRadius: 4,
                   fontSize: 10, fontWeight: 700,
-                  background: c.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : c.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, #c084fc 18%, var(--bg-2))",
-                  color: c.type === "L" ? "var(--info)" : c.type === "R" ? "var(--accent)" : "#c084fc",
+                  background: c.type === "L" ? "color-mix(in oklch, var(--info) 18%, var(--bg-2))" : c.type === "R" ? "color-mix(in oklch, var(--accent) 18%, var(--bg-2))" : "color-mix(in oklch, var(--purple) 18%, var(--bg-2))",
+                  color: c.type === "L" ? "var(--info)" : c.type === "R" ? "var(--accent)" : "var(--purple)",
                 }}>{c.type}</span>
                 <div style={{ minWidth: 0 }}>
                   <div className="mono tr" style={{ fontSize: "var(--fs-sm)" }}>{c.line}</div>

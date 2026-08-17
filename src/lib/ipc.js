@@ -225,6 +225,23 @@ export function onHostStatusChange(handler) {
   return sseSubscribe("host:status-changed", handler);
 }
 
+// Fired after every successful save (own or another client's) with the full
+// AppSettings — lets several web clients keep theme etc. in sync.
+export function onSettingsChanged(handler) {
+  if (isTauri) {
+    let unlisten = () => {};
+    let cancelled = false;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      if (cancelled) return;
+      listen("settings:changed", (e) => handler(e.payload)).then(fn => {
+        if (cancelled) fn(); else unlisten = fn;
+      });
+    });
+    return () => { cancelled = true; unlisten(); };
+  }
+  return sseSubscribe("settings:changed", handler);
+}
+
 // When the SSE stream drops events (slow client → `lagged`) or reconnects after
 // an error, the live state may be stale and callers should re-fetch. No-op in
 // Tauri (its event delivery doesn't drop). The first `open` is skipped since the

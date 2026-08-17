@@ -32,6 +32,7 @@
 - **系统托盘**：关闭窗口默认最小化到托盘，不打扰
 - **Web 模式**：不开窗口，作为后台服务运行，浏览器远程管理（Linux 服务器友好）
 - **便携模式**：解压即用，数据跟着程序走，不写注册表不留垃圾
+- **主题**：内置 Tunelo 深/浅色以及 One Half、Tokyo Night、Dracula、Nord、Solarized、Gruvbox、Catppuccin、GitHub、Rosé Pine 等 20 余套终端配色；也可以把 Windows Terminal / [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) 的配色方案 JSON 直接粘贴进来做成自定义主题
 
 ## Quick Start
 

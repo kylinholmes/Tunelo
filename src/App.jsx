@@ -1,6 +1,7 @@
 import React from "react";
 import { useTweaks } from "./lib/useTweaks";
 import * as ipc from "./lib/ipc";
+import { DEFAULT_THEME_ID, resolveTheme, applyTheme } from "./lib/themes";
 import { Icon } from "./components/ui";
 import { ConfirmProvider, useConfirm, useNotify } from "./components/Confirm";
 import DashboardPage from "./pages/Dashboard";
@@ -9,12 +10,12 @@ import HostsPage from "./pages/Hosts";
 import SettingsPage from "./pages/Settings";
 
 const TWEAK_DEFAULTS = {
-  theme: "dark",
-  accent: "#58e2a3",
   nav: "side",
-  railExpanded: false,
   radius: "sharp",
 };
+
+// last-applied theme, so the first paint matches before settings arrive
+const APPEARANCE_CACHE_KEY = "tunelo.appearance";
 
 const NAV_ITEMS = [
   { id: "dashboard", icon: "dashboard", label: "总览" },
@@ -78,19 +79,81 @@ function TokenGate({ checking, onSubmit }) {
 function AppInner() {
   const askConfirm = useConfirm();
   const notify = useNotify();
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [t] = useTweaks(TWEAK_DEFAULTS);
   const [page, setPage] = React.useState("dashboard");
   const [navState, setNavState] = React.useState({});
-
-  const [hosts, setHosts] = React.useState([]);
-  const [tunnels, setTunnels] = React.useState([]);
-  const [loaded, setLoaded] = React.useState(false);
 
   // Web auth gate. In Tauri or loopback-no-secret mode no token is needed, so
   // we're authed immediately; otherwise validate any stored token, and if it's
   // missing/invalid show the token login screen before loading any data.
   const [authed, setAuthed] = React.useState(!ipc.authRequired);
   const [authChecking, setAuthChecking] = React.useState(ipc.authRequired);
+
+  // AppSettings (settings.toml) — owned here so the theme and the Settings
+  // page write through one place and can't clobber each other with stale
+  // copies. `null` until the first load; `settingsError` if that failed.
+  const [settings, setSettings] = React.useState(null);
+  const [settingsError, setSettingsError] = React.useState(null);
+  const settingsRef = React.useRef(null);
+  const saveQueue = React.useRef(Promise.resolve());
+  const pendingSaves = React.useRef(0);
+
+  // Optimistic patch. Saves are chained so two quick edits never race on the
+  // settings.toml write; each request carries the full, latest state.
+  const patchSettings = React.useCallback((patch) => {
+    // never write a partial struct — serde defaults would wipe the rest
+    if (!settingsRef.current) return Promise.reject(new Error("设置尚未加载"));
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
+    setSettings(next);
+    pendingSaves.current += 1;
+    const run = saveQueue.current.then(() => ipc.saveSettings(next));
+    saveQueue.current = run.catch(() => {});
+    return run.finally(() => { pendingSaves.current -= 1; }).catch(async (e) => {
+      // pull canonical state back so the UI doesn't lie about what's saved
+      const fresh = await ipc.getSettings().catch(() => null);
+      if (fresh) { settingsRef.current = fresh; setSettings(fresh); }
+      throw e;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (!authed) return;
+    let cancelled = false;
+    ipc.getSettings()
+      .then(s => { if (!cancelled) { settingsRef.current = s; setSettings(s); } })
+      .catch(e => { if (!cancelled) setSettingsError(e.message || String(e)); });
+    // another client (or the tray) saved — adopt it unless we have writes in
+    // flight, in which case our own final save will supersede it anyway
+    const off = ipc.onSettingsChanged(s => {
+      if (pendingSaves.current > 0) return;
+      settingsRef.current = s;
+      setSettings(s);
+    });
+    return () => { cancelled = true; off(); };
+  }, [authed]);
+
+  // Theme: id + custom list live in settings; a localStorage cache lets us
+  // paint the right colours before the first settings round-trip completes.
+  const appearance = React.useMemo(() => {
+    if (settings) return { theme: settings.theme || DEFAULT_THEME_ID, customThemes: settings.custom_themes || [] };
+    try {
+      const cached = JSON.parse(localStorage.getItem(APPEARANCE_CACHE_KEY));
+      if (cached?.theme) return { theme: cached.theme, customThemes: cached.customThemes || [] };
+    } catch {}
+    return { theme: DEFAULT_THEME_ID, customThemes: [] };
+  }, [settings]);
+  React.useEffect(() => {
+    if (!settings) return;
+    try { localStorage.setItem(APPEARANCE_CACHE_KEY, JSON.stringify(appearance)); } catch {}
+  }, [settings, appearance]);
+  const theme = React.useMemo(() => resolveTheme(appearance.theme, appearance.customThemes), [appearance]);
+  // goes on <html> (not .app) so portalled dialogs are themed too
+  React.useLayoutEffect(() => { applyTheme(theme); }, [theme]);
+
+  const [hosts, setHosts] = React.useState([]);
+  const [tunnels, setTunnels] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
 
   React.useEffect(() => {
     if (!ipc.authRequired) return;
@@ -304,20 +367,13 @@ function AppInner() {
     );
   }
 
-  const appStyle = {
-    "--accent": t.accent,
-    "--accent-soft": `color-mix(in oklch, ${t.accent} 14%, transparent)`,
-    "--accent-line": `color-mix(in oklch, ${t.accent} 40%, transparent)`,
-    "--ok": t.accent,
-  };
-
   const pageNode = (() => {
     if (!loaded) return null;
     switch (page) {
       case "dashboard": return <DashboardPage tunnels={tunnels} hosts={hosts} onNavigate={navigate} onTunnelAction={tunnelAction}/>;
       case "tunnels":   return <TunnelsPage tunnels={tunnels} hosts={hosts} onTunnelAction={tunnelAction} onSaveTunnel={handleSaveTunnel} onReloadTunnels={reloadTunnels} onBulkDelete={handleBulkDeleteTunnels} focus={navState.tunnels?.focus} startCreate={navState.tunnels?.create} startImport={navState.tunnels?.import} onConsumeIntent={(k) => consumeIntent("tunnels", k)}/>;
       case "hosts":     return <HostsPage hosts={hosts} tunnels={tunnels} onSaveHost={handleSaveHost} onDeleteHost={handleDeleteHost} onReloadHosts={reloadHosts} onBulkDelete={handleBulkDeleteHosts} startCreate={navState.hosts?.create} startImport={navState.hosts?.import} onConsumeIntent={(k) => consumeIntent("hosts", k)}/>;
-      case "settings":  return <SettingsPage/>;
+      case "settings":  return <SettingsPage settings={settings} settingsError={settingsError} onPatch={patchSettings}/>;
       default: return null;
     }
   })();
@@ -325,29 +381,17 @@ function AppInner() {
   return (
     <div
       className="app"
-      data-theme={t.theme}
       data-nav={t.nav}
       data-radius={t.radius}
-      style={appStyle}
     >
       {t.nav === "side" ? (
-        <div className="rail" data-expanded={t.railExpanded}>
+        <div className="rail">
           {NAV_ITEMS.map(n => (
             <button key={n.id} className="rail-item" aria-selected={page === n.id} onClick={() => setPage(n.id)}>
               <Icon name={n.icon} size={18}/>
               <span className="rail-label">{n.label}</span>
-              <span className="tip">{n.label}</span>
             </button>
           ))}
-          <div className="spacer"/>
-          <button
-            className="rail-item rail-toggle"
-            onClick={() => setTweak("railExpanded", !t.railExpanded)}
-            title={t.railExpanded ? "收起侧栏" : "展开侧栏"}
-          >
-            <Icon name="chevron" size={16} style={{ transform: t.railExpanded ? "rotate(180deg)" : "none", transition: "transform .2s" }}/>
-            <span className="rail-label">收起</span>
-          </button>
         </div>
       ) : (
         <div className="topnav">
