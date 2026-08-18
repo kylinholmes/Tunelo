@@ -173,6 +173,9 @@ mod tests {
             status: TunnelStatus::Idle,
             started_at: None,
             last_error: None,
+            reconnect_count: 0,
+            last_connected_at: None,
+            disconnected_at: None,
         }
     }
 

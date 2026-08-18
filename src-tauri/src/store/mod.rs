@@ -94,27 +94,39 @@ impl Store {
     /// last_error). Does NOT persist — these are transient between runs
     /// and only persisting on every emit would thrash the disk. The next
     /// real save (save_tunnel) will pick up whatever is current.
+    ///
+    /// Returns the updated tunnel so callers can broadcast the full runtime
+    /// snapshot (including the derived `last_connected_at` /
+    /// `disconnected_at`, which only this method knows how to compute).
     pub fn update_runtime(
         &self,
         id: Uuid,
         status: TunnelStatus,
         started_at: Option<i64>,
         last_error: Option<String>,
-    ) -> AppResult<()> {
+        reconnect_count: u32,
+    ) -> AppResult<Tunnel> {
         let mut tunnels = self.tunnels.write().unwrap();
         let Some(t) = tunnels.iter_mut().find(|t| t.id == id) else {
             return Err(AppError::not_found("tunnel"));
         };
+        let was_connected = t.status == TunnelStatus::Connected;
         t.status = status;
         // Connected status sets started_at; transitions that don't carry a
         // timestamp clear it for non-Connected states.
         if status == TunnelStatus::Connected {
             t.started_at = started_at;
+            t.last_connected_at = started_at;
+            t.disconnected_at = None;
         } else if matches!(status, TunnelStatus::Idle | TunnelStatus::Failed) {
             t.started_at = None;
         }
+        if was_connected && status != TunnelStatus::Connected {
+            t.disconnected_at = Some(now_ms());
+        }
+        t.reconnect_count = reconnect_count;
         t.last_error = last_error;
-        Ok(())
+        Ok(t.clone())
     }
 
     /// Called once at boot to clear stale runtime state from the on-disk
@@ -124,7 +136,9 @@ impl Store {
         for t in tunnels.iter_mut() {
             t.status = TunnelStatus::Idle;
             t.started_at = None;
-            // keep last_error so the user sees why the last run failed
+            t.reconnect_count = 0;
+            // keep last_error / last_connected_at / disconnected_at so the
+            // user sees why and when the last run ended
         }
     }
 
@@ -245,10 +259,13 @@ impl Store {
                 tunnel.last_error = None;
                 tunnels.push(tunnel.clone());
             } else if let Some(existing) = tunnels.iter_mut().find(|t| t.id == tunnel.id) {
-                // 保留运行时字段（status / started_at / last_error）
+                // 保留运行时字段（status / started_at / last_error / 重连计数与时间点）
                 tunnel.status = existing.status;
                 tunnel.started_at = existing.started_at;
                 tunnel.last_error = existing.last_error.clone();
+                tunnel.reconnect_count = existing.reconnect_count;
+                tunnel.last_connected_at = existing.last_connected_at;
+                tunnel.disconnected_at = existing.disconnected_at;
                 *existing = tunnel.clone();
             } else {
                 tunnels.push(tunnel.clone());
@@ -357,6 +374,7 @@ mod tests {
             bind_address: None, remote_host: Some("db".into()), remote_port: Some(5432),
             host_id: h.id, keep_alive: true, auto_start: false,
             status: TunnelStatus::Idle, started_at: None, last_error: None,
+            reconnect_count: 0, last_connected_at: None, disconnected_at: None,
         };
         assert!(store.save_tunnel(t).is_err());
     }
@@ -386,9 +404,18 @@ mod tests {
             bind_address: None, remote_host: Some("db".into()), remote_port: Some(5432),
             host_id: h.id, keep_alive: true, auto_start: false,
             status: TunnelStatus::Idle, started_at: None, last_error: None,
+            reconnect_count: 0, last_connected_at: None, disconnected_at: None,
         }).unwrap();
         assert!(store.delete_host(h.id).is_err(), "referenced host must not delete");
         store.delete_tunnel(t.id).unwrap();
         assert!(store.delete_host(h.id).is_ok(), "unreferenced host should delete");
     }
+}
+
+pub fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }

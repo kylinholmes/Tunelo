@@ -215,7 +215,13 @@ function AppInner() {
     if (!authed) return;
     const off = ipc.onTunnelStatusChange((p) => {
       setTunnels(ts => ts.map(t => t.id === p.id
-        ? { ...t, status: p.status, started_at: p.started_at, last_error: p.last_error }
+        ? {
+            ...t,
+            status: p.status, started_at: p.started_at, last_error: p.last_error,
+            reconnect_count: p.reconnect_count ?? 0,
+            last_connected_at: p.last_connected_at ?? t.last_connected_at,
+            disconnected_at: p.disconnected_at ?? t.disconnected_at,
+          }
         : t
       ));
     });

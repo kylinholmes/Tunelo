@@ -129,7 +129,7 @@ export default function TunnelsPage({ tunnels, hosts, onTunnelAction, onSaveTunn
             cta={tunnels.length === 0 ? { label: "新建隧道", onClick: () => openEdit("new") } : null}
           />
         )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 1440, margin: "0 auto", width: "100%" }}>
           {filtered.map(t => (
             <TunnelCard
               key={t.id}

@@ -1,9 +1,11 @@
 pub mod context;
 pub mod event;
+pub mod events;
 pub mod startup;
 
 pub use context::AppContext;
 pub use event::{BroadcastSink, Sink};
+pub use events::{AppEvent, EventKind, EventLog};
 #[cfg(not(target_os = "linux"))]
 pub use event::TauriSink;
 

@@ -35,6 +35,8 @@ pub fn build_router(
         .route("/tunnels/:id/start", post(tunnels::start))
         .route("/tunnels/:id/stop", post(tunnels::stop))
         .route("/tunnels/:id/restart", post(tunnels::restart))
+        // recent activity (timeline on the dashboard)
+        .route("/events/recent", get(tunnels::recent_events))
         // settings
         .route("/settings", get(settings::get).post(settings::save))
         // auth probe — succeeds (200) only if the bearer token is valid, so the

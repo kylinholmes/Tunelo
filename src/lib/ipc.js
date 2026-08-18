@@ -105,6 +105,12 @@ export async function restartTunnel(id) {
   return isTauri ? invoke("restart_tunnel", { id }) : httpPost(`/tunnels/${id}/restart`);
 }
 
+// ─── recent activity (dashboard timeline) ───
+
+export async function listEvents(limit = 50) {
+  return isTauri ? invoke("list_events", { limit }) : httpGet(`/events/recent?limit=${limit}`);
+}
+
 // ─── settings ───
 
 export async function getSettings() {
@@ -139,7 +145,7 @@ export async function importTunnels(candidates) {
 // ─── app meta / opener / autostart ───
 
 export async function getAppVersion() {
-  if (!isTauri) return "web";
+  if (!isTauri) return (typeof window !== "undefined" && window.__TUNELO_VERSION__) || "web";
   const { getVersion } = await import("@tauri-apps/api/app");
   return getVersion();
 }
@@ -223,6 +229,22 @@ export function onHostStatusChange(handler) {
     return () => { cancelled = true; unlisten(); };
   }
   return sseSubscribe("host:status-changed", handler);
+}
+
+// A new timeline entry (tunnel connected/dropped/…, host test result).
+export function onNewEvent(handler) {
+  if (isTauri) {
+    let unlisten = () => {};
+    let cancelled = false;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      if (cancelled) return;
+      listen("event:new", (e) => handler(e.payload)).then(fn => {
+        if (cancelled) fn(); else unlisten = fn;
+      });
+    });
+    return () => { cancelled = true; unlisten(); };
+  }
+  return sseSubscribe("event:new", handler);
 }
 
 // Fired after every successful save (own or another client's) with the full

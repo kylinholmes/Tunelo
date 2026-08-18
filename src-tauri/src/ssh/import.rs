@@ -194,6 +194,9 @@ pub fn import_tunnels(ctx: &AppContext, candidates: Vec<TunnelCandidate>) -> App
             status: TunnelStatus::Idle,
             started_at: None,
             last_error: None,
+            reconnect_count: 0,
+            last_connected_at: None,
+            disconnected_at: None,
         };
         saved.push(ctx.store.save_tunnel(tunnel)?);
     }

@@ -2,6 +2,7 @@ import React from "react";
 import { Icon, Toggle } from "../components/ui";
 import ThemePicker from "../components/ThemePicker";
 import { resolveTheme, accentOf, DEFAULT_THEME_ID } from "../lib/themes";
+import { checkForUpdate, RELEASES_URL } from "../lib/updates";
 import * as ipc from "../lib/ipc";
 import { useNotify } from "../components/Confirm";
 
@@ -126,11 +127,13 @@ export default function SettingsPage({ settings: s, settingsError, onPatch }) {
               background: "linear-gradient(135deg, var(--accent), color-mix(in oklch, var(--accent) 60%, #2eaf78))",
               color: "var(--on-accent)", fontWeight: 800, fontSize: 22, letterSpacing: "-0.04em",
             }}>TL</div>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>Tunelo</div>
-              <div className="dim" style={{ fontSize: "var(--fs-sm)" }}>
-                {version ? `v${version}` : ""} · 跨平台 SSH 隧道管理器
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                Tunelo
+                {version && version !== "web" && <span className="chip outline mono" style={{ height: 20 }}>v{version}</span>}
               </div>
+              <div className="dim" style={{ fontSize: "var(--fs-sm)" }}>跨平台 SSH 隧道管理器</div>
+              <UpdateHint version={version}/>
             </div>
             <div style={{ flex: 1 }}/>
             <button
@@ -145,6 +148,51 @@ export default function SettingsPage({ settings: s, settingsError, onPatch }) {
       </div>
     </div>
   );
+}
+
+// "有新版本 v0.9.7 →" under the version, checked against GitHub Releases
+// (cached a few hours). Silent when up to date or when the check can't run.
+function UpdateHint({ version }) {
+  const [state, setState] = React.useState({ phase: "idle" }); // idle | checking | result | error
+  const run = React.useCallback(async (force) => {
+    setState({ phase: "checking" });
+    try {
+      const r = await checkForUpdate(version, { force });
+      setState(r ? { phase: "result", ...r } : { phase: "idle" });
+    } catch (e) {
+      setState({ phase: "error", message: e.message || String(e) });
+    }
+  }, [version]);
+  React.useEffect(() => { if (version && version !== "web") run(false); }, [version, run]);
+
+  if (!version || version === "web") return null;
+  const linkStyle = { background: "transparent", border: 0, padding: 0, font: "inherit", cursor: "default", color: "var(--fg-3)" };
+  if (state.phase === "checking") return <div className="dim-2" style={{ fontSize: "var(--fs-xs)", marginTop: 4 }}>正在检查更新…</div>;
+  if (state.phase === "error") {
+    return (
+      <div className="dim-2" style={{ fontSize: "var(--fs-xs)", marginTop: 4 }}>
+        无法检查更新（{state.message}）· <button type="button" style={linkStyle} onClick={() => run(true)}>重试</button>
+      </div>
+    );
+  }
+  if (state.phase === "result" && state.newer) {
+    return (
+      <div style={{ fontSize: "var(--fs-xs)", marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="spill info"><span className="dot info"/>有新版本 v{state.latest}</span>
+        <button type="button" className="btn sm" onClick={() => ipc.openExternal(state.url || RELEASES_URL)}>
+          <Icon name="external" size={10}/> 前往下载
+        </button>
+      </div>
+    );
+  }
+  if (state.phase === "result") {
+    return (
+      <div className="dim-2" style={{ fontSize: "var(--fs-xs)", marginTop: 4 }}>
+        已是最新版本 · <button type="button" style={linkStyle} onClick={() => run(true)}>重新检查</button>
+      </div>
+    );
+  }
+  return null;
 }
 
 // Theme picker is collapsed behind a summary row by default — the full grid

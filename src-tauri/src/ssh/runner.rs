@@ -25,7 +25,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::core::AppContext;
+use crate::core::{AppContext, EventKind};
 use crate::ssh::{command, probe};
 use crate::store::{TunnelStatus, TunnelType};
 
@@ -41,6 +41,9 @@ struct StatusPayload {
     status: TunnelStatus,
     started_at: Option<i64>,
     last_error: Option<String>,
+    reconnect_count: u32,
+    last_connected_at: Option<i64>,
+    disconnected_at: Option<i64>,
 }
 
 pub struct Runner {
@@ -68,7 +71,7 @@ impl Runner {
                 return;
             };
             let Some(host) = self.ctx.store.get_host(tunnel.host_id) else {
-                self.emit(TunnelStatus::Failed, None, Some("依赖的主机已不存在".into()));
+                self.emit(TunnelStatus::Failed, None, Some("依赖的主机已不存在".into()), attempt);
                 return;
             };
             let settings = self.ctx.settings.get();
@@ -77,7 +80,7 @@ impl Runner {
             let ssh_path = match settings.ssh_path {
                 Some(p) if !p.trim().is_empty() => p,
                 _ => {
-                    self.emit(TunnelStatus::Failed, None, Some("ssh 可执行路径未配置（Settings 页）".into()));
+                    self.emit(TunnelStatus::Failed, None, Some("ssh 可执行路径未配置（Settings 页）".into()), attempt);
                     return;
                 }
             };
@@ -92,17 +95,17 @@ impl Runner {
                 if let Err(e) = probe::check_local_port_free(bind, tunnel.local_port) {
                     let msg = format!("本地端口 {} 被占用: {}", tunnel.local_port, e);
                     if !tunnel.keep_alive {
-                        self.emit(TunnelStatus::Failed, None, Some(msg));
+                        self.emit(TunnelStatus::Failed, None, Some(msg), attempt);
                         return;
                     }
                     attempt += 1;
-                    self.emit(TunnelStatus::Reconnecting, None, Some(msg));
+                    self.emit(TunnelStatus::Reconnecting, None, Some(msg), attempt);
                     if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
                     continue;
                 }
             }
 
-            self.emit(TunnelStatus::Connecting, None, None);
+            self.emit(TunnelStatus::Connecting, None, None, attempt);
 
             let args = command::build_args(&tunnel, &host, &all_hosts);
             let mut cmd = Command::new(&ssh_path);
@@ -124,11 +127,11 @@ impl Runner {
                 Err(e) => {
                     let msg = format!("启动 ssh 失败: {}", e);
                     if !tunnel.keep_alive {
-                        self.emit(TunnelStatus::Failed, None, Some(msg));
+                        self.emit(TunnelStatus::Failed, None, Some(msg), attempt);
                         return;
                     }
                     attempt += 1;
-                    self.emit(TunnelStatus::Reconnecting, None, Some(msg));
+                    self.emit(TunnelStatus::Reconnecting, None, Some(msg), attempt);
                     if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
                     continue;
                 }
@@ -162,7 +165,7 @@ impl Runner {
                 _ = &mut probe_window => {
                     // survived → connected
                     attempt = 0;
-                    self.emit(TunnelStatus::Connected, Some(now_ms()), None);
+                    self.emit(TunnelStatus::Connected, Some(now_ms()), None, attempt);
                 }
                 status = child.wait() => {
                     // child is dead — drop the pid immediately so a shutdown
@@ -172,22 +175,22 @@ impl Runner {
                     let tail = stderr_tail(&stderr_buf);
                     let msg = format!("ssh 立即退出 ({}){}", exit, format_tail(&tail));
                     if !tunnel.keep_alive {
-                        self.emit(TunnelStatus::Failed, None, Some(msg));
+                        self.emit(TunnelStatus::Failed, None, Some(msg), attempt);
                         return;
                     }
                     attempt += 1;
-                    self.emit(TunnelStatus::Reconnecting, None, Some(msg));
+                    self.emit(TunnelStatus::Reconnecting, None, Some(msg), attempt);
                     if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
                     continue;
                 }
                 cmd = self.cmd_rx.recv() => {
-                    self.emit(TunnelStatus::Stopping, None, None);
+                    self.emit(TunnelStatus::Stopping, None, None, attempt);
                     let _ = child.start_kill();
                     let _ = child.wait().await;
                     *self.child_pid.lock().unwrap() = None;
                     match cmd {
                         Some(RunnerCmd::Stop) | None => {
-                            self.emit(TunnelStatus::Idle, None, None);
+                            self.emit(TunnelStatus::Idle, None, None, 0);
                             return;
                         }
                         Some(RunnerCmd::Restart) => { attempt = 0; continue; }
@@ -198,13 +201,13 @@ impl Runner {
             // Phase B — connected; wait for either external cmd or process exit
             tokio::select! {
                 cmd = self.cmd_rx.recv() => {
-                    self.emit(TunnelStatus::Stopping, None, None);
+                    self.emit(TunnelStatus::Stopping, None, None, attempt);
                     let _ = child.start_kill();
                     let _ = child.wait().await;
                     *self.child_pid.lock().unwrap() = None;
                     match cmd {
                         Some(RunnerCmd::Stop) | None => {
-                            self.emit(TunnelStatus::Idle, None, None);
+                            self.emit(TunnelStatus::Idle, None, None, 0);
                             return;
                         }
                         Some(RunnerCmd::Restart) => { attempt = 0; continue; }
@@ -216,11 +219,11 @@ impl Runner {
                     let tail = stderr_tail(&stderr_buf);
                     let msg = format!("ssh 退出 ({}){}", exit, format_tail(&tail));
                     if !tunnel.keep_alive {
-                        self.emit(TunnelStatus::Failed, None, Some(msg));
+                        self.emit(TunnelStatus::Failed, None, Some(msg), attempt);
                         return;
                     }
                     attempt += 1;
-                    self.emit(TunnelStatus::Reconnecting, None, Some(msg));
+                    self.emit(TunnelStatus::Reconnecting, None, Some(msg), attempt);
                     if !self.wait_or_cmd(backoff_delay(attempt)).await { return; }
                     continue;
                 }
@@ -235,7 +238,7 @@ impl Runner {
             _ = tokio::time::sleep(delay) => true,
             cmd = self.cmd_rx.recv() => match cmd {
                 Some(RunnerCmd::Stop) | None => {
-                    self.emit(TunnelStatus::Idle, None, None);
+                    self.emit(TunnelStatus::Idle, None, None, 0);
                     false
                 }
                 Some(RunnerCmd::Restart) => true,
@@ -243,15 +246,33 @@ impl Runner {
         }
     }
 
-    fn emit(&self, status: TunnelStatus, started_at: Option<i64>, last_error: Option<String>) {
-        let _ = self.ctx.store.update_runtime(self.tunnel_id, status, started_at, last_error.clone());
+    fn emit(&self, status: TunnelStatus, started_at: Option<i64>, last_error: Option<String>, attempt: u32) {
+        let snap = self.ctx.store.update_runtime(self.tunnel_id, status, started_at, last_error.clone(), attempt).ok();
         let payload = serde_json::to_value(StatusPayload {
             id: self.tunnel_id,
             status,
             started_at,
-            last_error,
+            last_error: last_error.clone(),
+            reconnect_count: attempt,
+            last_connected_at: snap.as_ref().and_then(|t| t.last_connected_at),
+            disconnected_at: snap.as_ref().and_then(|t| t.disconnected_at),
         }).unwrap_or(serde_json::Value::Null);
         self.ctx.sink.emit("tunnel:status-changed", payload);
+
+        // Timeline entries — only the transitions a user cares about.
+        // (Idle is only ever emitted here on an explicit stop.)
+        let name = snap.map(|t| t.name).unwrap_or_default();
+        match status {
+            TunnelStatus::Connected =>
+                self.ctx.record_event(EventKind::Tunnel, self.tunnel_id, name, "connected", None, None),
+            TunnelStatus::Reconnecting =>
+                self.ctx.record_event(EventKind::Tunnel, self.tunnel_id, name, "reconnecting", last_error, Some(attempt)),
+            TunnelStatus::Failed =>
+                self.ctx.record_event(EventKind::Tunnel, self.tunnel_id, name, "failed", last_error, None),
+            TunnelStatus::Idle =>
+                self.ctx.record_event(EventKind::Tunnel, self.tunnel_id, name, "stopped", None, None),
+            TunnelStatus::Connecting | TunnelStatus::Stopping => {}
+        }
     }
 }
 

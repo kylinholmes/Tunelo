@@ -5,7 +5,7 @@
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::core::AppContext;
+use crate::core::{AppContext, EventKind};
 use crate::error::{AppError, AppResult};
 use crate::ssh::{command, probe};
 use crate::store::HostStatus;
@@ -70,6 +70,12 @@ pub async fn test_host(ctx: &AppContext, id: Uuid, deep: bool) -> AppResult<Test
     };
     let _ = ctx.store.set_host_status(id, status, latency, last_error.clone());
     emit(ctx, id, status, latency, last_error.clone());
+    ctx.record_event(
+        EventKind::Host, id, host.alias.clone(),
+        if result.is_ok() { "ok" } else { "fail" },
+        match &result { Ok(ms) => Some(format!("{ms} ms")), Err(e) => Some(e.clone()) },
+        None,
+    );
 
     Ok(TestResult {
         ok: result.is_ok(),

@@ -109,7 +109,8 @@ pub fn run() {
             let sink: crate::core::Sink = std::sync::Arc::new(
                 crate::core::TauriSink(app.handle().clone())
             );
-            let ctx = crate::core::AppContext::new(store, settings, sink);
+            let events = crate::core::EventLog::load(Some(data_dir.join("events.json")));
+            let ctx = crate::core::AppContext::new(store, settings, events, sink);
 
             app.manage(ctx.clone());
             crate::core::startup::apply_startup_actions(ctx.clone());
@@ -183,6 +184,7 @@ pub fn run() {
             commands::tunnel_cmd::list_tunnels,
             commands::tunnel_cmd::save_tunnel,
             commands::tunnel_cmd::delete_tunnel,
+            commands::tunnel_cmd::list_events,
             commands::settings_cmd::get_settings,
             commands::settings_cmd::save_settings,
             commands::import_cmd::parse_ssh_config_hosts,

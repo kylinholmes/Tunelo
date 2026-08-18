@@ -47,7 +47,8 @@ pub fn run_web(cli: Cli) {
     // 5. Build ctx with BroadcastSink so SSE consumers receive live events.
     let bsink = BroadcastSink::new(64);
     let sink: Sink = Arc::new(bsink.clone());
-    let ctx = AppContext::new(store, settings, sink);
+    let events = crate::core::EventLog::load(Some(data_dir.join("events.json")));
+    let ctx = AppContext::new(store, settings, events, sink);
 
     // 6. Apply shared startup actions (auto-detect ssh, auto-connect, etc.)
     //    startup::apply_startup_actions uses tokio::spawn internally, so it

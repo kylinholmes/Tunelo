@@ -47,6 +47,18 @@ pub struct Tunnel {
     pub started_at: Option<i64>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// Consecutive reconnect attempts in the current outage; 0 while
+    /// connected. Mirrors the runner's backoff counter.
+    #[serde(default)]
+    pub reconnect_count: u32,
+    /// When the most recent successful connection started. Unlike
+    /// `started_at` this survives the drop, so the UI can say "was up from
+    /// 14:02 for 2h07m" while reconnecting.
+    #[serde(default)]
+    pub last_connected_at: Option<i64>,
+    /// When the most recent connection dropped (or was stopped).
+    #[serde(default)]
+    pub disconnected_at: Option<i64>,
 }
 
 fn default_true() -> bool { true }

@@ -25,8 +25,9 @@ pub async fn index(auth_required: bool) -> Response {
         None => return (StatusCode::INTERNAL_SERVER_ERROR, "index.html missing").into_response(),
     };
     let inject = format!(
-        "<script>window.__TUNELO_WEB__=true;window.__TUNELO_AUTH_REQUIRED__={};</script>",
+        "<script>window.__TUNELO_WEB__=true;window.__TUNELO_AUTH_REQUIRED__={};window.__TUNELO_VERSION__=\"{}\";</script>",
         if auth_required { "true" } else { "false" },
+        env!("CARGO_PKG_VERSION"),
     );
     if let Some(idx) = html.find("</head>") {
         html.insert_str(idx, &inject);

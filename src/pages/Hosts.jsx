@@ -129,7 +129,7 @@ export default function HostsPage({ hosts, tunnels: allTunnels = [], onSaveHost,
             icon="host"
           />
         )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 1440, margin: "0 auto", width: "100%" }}>
           {filtered.map(h => (
             <HostCard
               key={h.id}
